@@ -275,11 +275,23 @@ static void iqs5xx_work_handler(struct k_work *work) {
             int32_t dist = abs(ax1 - ax0) + abs(ay1 - ay0);
             if (data->zoom_prev_dist >= 0) {
                 data->zoom_acc += dist - data->zoom_prev_dist;
+#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
+                // Diagnostic: emit zoom as a sensitive plain scroll so a pinch
+                // is visibly testable on any host, with no Ctrl+scroll mapping.
+                // If the page scrolls during a pinch, the chip+driver detect
+                // zoom and the issue is purely the host-side mapping.
+                const int32_t zoom_div = 8;
+#else
                 const int32_t zoom_div = 32;
+#endif
                 if (abs(data->zoom_acc) >= zoom_div) {
                     int32_t ticks = data->zoom_acc / zoom_div;
+#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
+                    input_report_rel(dev, INPUT_REL_WHEEL, ticks, true, K_FOREVER);
+#else
                     uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
                     input_report_rel(dev, code, ticks, true, K_FOREVER);
+#endif
                     data->zoom_acc -= ticks * zoom_div;
                 }
             }

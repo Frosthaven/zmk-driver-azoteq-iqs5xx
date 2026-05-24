@@ -4,17 +4,28 @@
 > [AYM1607/zmk-driver-azoteq-iqs5xx](https://github.com/AYM1607/zmk-driver-azoteq-iqs5xx)
 > with extra gesture support. Differences vs upstream:
 >
-> - **Two-finger zoom (pinch + expand).** New `zoom` devicetree property. The
->   chip's zoom gesture is enabled and its two directions are emitted on
->   distinct relative codes (`INPUT_REL_MISC` = expand/zoom in,
->   `INPUT_REL_DIAL` = pinch/zoom out) so they never collide with scroll and can
->   be mapped independently. Map each to Ctrl+scroll on the host with a
->   `zmk,input-processor-behaviors` processor (see Usage). Two codes are used
->   because that processor keys on the event code, not the value's sign.
-> - **Double-tap-and-drag.** New `drag-requires-double-tap` (+ `double-tap-time`,
->   default 300 ms) properties. When set, a press-and-hold only latches a drag
->   if it follows a single tap within the window (macOS-style); a bare
->   press-and-hold just moves the cursor.
+> - **Three-finger tap → middle click.** New `three-finger-tap` property.
+>   The chip has no native 3-finger gesture, so it is synthesized from the
+>   finger-count register; the driver enables the chip's touch events for it.
+> - **All clicks synthesized on lift, by peak finger count.** Left (1) / right
+>   (2) / middle (3) clicks are decided when the fingers lift, from the highest
+>   finger count seen during the touch. A staggered multi-finger landing resolves
+>   correctly (no early/stray right-click before the 3rd finger), and a
+>   leftover finger after a scroll can no longer drag the cursor.
+> - **Double-tap-and-drag LOCK.** New `drag-requires-double-tap` (+
+>   `double-tap-time`, default 275 ms) properties. A single tap then a touch
+>   within the window latches the left button as a drag that stays held across
+>   finger lifts (drag-lock); a stationary tap ends it (a 2-/3-finger tap ends it
+>   *and* issues its click). A bare press-and-hold just moves the cursor.
+> - **Two-finger zoom (pinch/expand) — plumbing only, non-functional in
+>   practice.** New `zoom` (+ `zoom-initial-distance`) property. The driver
+>   enables the chip's zoom gesture and emits its two directions on
+>   `INPUT_REL_MISC` (expand) / `INPUT_REL_DIAL` (pinch) for a Ctrl+scroll
+>   mapping (see Usage). **However, the IQS5xx does not appear to raise the zoom
+>   gesture** on the modules tested, and no known implementation (QMK, the rwalkr
+>   Rust crate, the Linux kernel driver) exercises it either. The code is left in
+>   place in case a future module/config fires it; treat pinch-zoom as
+>   unsupported on current hardware.
 >
 > Not changed: scroll axis is still chosen by the chip's gesture engine based on
 > the two contacts' geometry — the IQS5xx exposes no register to decouple scroll
@@ -39,13 +50,18 @@ Feel free to send a pull request if you test with any of the following models:
 ## Supported features
 
 - Trackpad movement.
-- Single finger tap: Reported as a left click.
-- Two finger tap: Reported as a right click.
-- Press and hold: Reported as a continuos left click (allows click and drag).
-- Double-tap-and-drag (fork): with `drag-requires-double-tap`, drag only latches when the hold follows a tap.
+- Single finger tap: left click (synthesized on lift).
+- Two finger tap: right click (synthesized on lift by peak finger count).
+- Three finger tap: middle click (fork; `three-finger-tap`).
+- Press and hold: continuous left click (allows click and drag).
+- Double-tap-and-drag lock (fork): with `drag-requires-double-tap`, a tap then a
+  touch latches a drag that holds across lifts and ends on a stationary tap.
 - Vertical scroll.
 - Horizontal scroll.
-- Two-finger zoom / pinch+expand (fork): expand on `INPUT_REL_MISC`, pinch on `INPUT_REL_DIAL`, map both to Ctrl+scroll on the host.
+- Two-finger zoom / pinch+expand (fork): **implemented but non-functional on
+  tested IQS5xx hardware** — the chip does not raise the zoom gesture in
+  practice. Plumbing (expand on `INPUT_REL_MISC`, pinch on `INPUT_REL_DIAL`,
+  mapped to Ctrl+scroll) is left in place; treat as unsupported.
 
 ## Usage
 

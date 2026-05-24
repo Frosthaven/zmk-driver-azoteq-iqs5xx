@@ -127,6 +127,7 @@ struct iqs5xx_config {
     bool one_finger_tap;
     bool press_and_hold;
     bool two_finger_tap;
+    bool three_finger_tap;
     bool zoom;
     uint16_t zoom_initial_distance;
     uint16_t press_and_hold_time;
@@ -170,4 +171,7 @@ struct iqs5xx_data {
     // Immediate (no chip-timer) double-tap-drag state.
     bool manual_drag;
     uint8_t prev_num_fingers;
+    // Touch-sequence tracking for the synthesized three-finger middle-click.
+    uint8_t touch_max_fingers;
+    int64_t touch_start_time;
 };

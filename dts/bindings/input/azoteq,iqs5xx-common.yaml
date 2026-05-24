@@ -24,6 +24,13 @@ properties:
     type: boolean
     description: "Register two finger tap gestures and report them as a right click"
 
+  three-finger-tap:
+    type: boolean
+    description: |
+      Report a quick three-finger tap as a middle click. Synthesized in the
+      driver from the finger-count register (the chip has no native 3-finger
+      gesture); requires the chip's touch events, which the driver enables.
+
   zoom:
     type: boolean
     description: |

@@ -183,6 +183,27 @@ static void iqs5xx_work_handler(struct k_work *work) {
         }
     }
 
+    // Three-finger tap -> middle click. The chip has no native 3-finger
+    // gesture, so track the peak finger count of the current touch and, when
+    // all fingers lift quickly with a peak of exactly 3, emit a middle click.
+    if (num_fingers > 0) {
+        if (data->prev_num_fingers == 0) {
+            data->touch_start_time = k_uptime_get();
+            data->touch_max_fingers = num_fingers;
+        } else if (num_fingers > data->touch_max_fingers) {
+            data->touch_max_fingers = num_fingers;
+        }
+    } else if (data->prev_num_fingers > 0) {
+        if (config->three_finger_tap && data->touch_max_fingers == 3 && !data->manual_drag &&
+            (k_uptime_get() - data->touch_start_time) <= 250) {
+            k_work_cancel_delayable(&data->button_release_work);
+            input_report_key(dev, MIDDLE_BUTTON_CODE, 1, true, K_FOREVER);
+            data->buttons_pressed |= BIT(MIDDLE_BUTTON_CODE - INPUT_BTN_0);
+            k_work_schedule(&data->button_release_work, K_MSEC(100));
+        }
+        data->touch_max_fingers = 0;
+    }
+
     // Double-tap-drag with drag-lock: a tap, then a touch, latches the left
     // button immediately (no chip hold timer). The button stays held across
     // finger lifts -- so you can drag in multiple strokes -- and a TAP ends it.
@@ -299,8 +320,11 @@ static int iqs5xx_setup_device(const struct device *dev) {
     int ret;
 
     // Enable event mode and trackpad events.
+    // TOUCH_EVENT makes the chip signal on finger-count changes (incl. the
+    // final lift), which the synthesized three-finger middle-click relies on.
     ret = iqs5xx_write_reg8(dev, IQS5XX_SYSTEM_CONFIG_1,
-                            IQS5XX_EVENT_MODE | IQS5XX_TP_EVENT | IQS5XX_GESTURE_EVENT);
+                            IQS5XX_EVENT_MODE | IQS5XX_TP_EVENT | IQS5XX_GESTURE_EVENT |
+                                IQS5XX_TOUCH_EVENT);
     if (ret < 0) {
         LOG_ERR("Failed to configure event mode: %d", ret);
         return ret;
@@ -483,6 +507,7 @@ static int iqs5xx_init(const struct device *dev) {
         .one_finger_tap = DT_INST_PROP(n, one_finger_tap),                                         \
         .press_and_hold = DT_INST_PROP(n, press_and_hold),                                         \
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
+        .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
         .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 25),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \

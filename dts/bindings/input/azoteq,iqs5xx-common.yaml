@@ -41,8 +41,12 @@ properties:
 
   double-tap-time:
     type: int
-    description: "Max ms between the tap and the following hold for drag-requires-double-tap."
-    default: 300
+    description: |
+      Max ms gap between the single tap and the second touch landing for
+      drag-requires-double-tap. The driver adds press-and-hold-time internally
+      (the chip only raises the hold after that delay), so the effective
+      tap->drag window is double-tap-time + press-and-hold-time.
+    default: 400
 
   scroll:
     type: boolean

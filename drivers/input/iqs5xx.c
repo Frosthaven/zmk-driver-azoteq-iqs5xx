@@ -129,6 +129,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
     bool zoom = (gesture_events_1 & IQS5XX_ZOOM) != 0;
     if (!zoom) {
         data->zoom_acc = 0;
+        data->zoom_prev_dist = -1;
     }
 
     uint16_t button_code;
@@ -146,10 +147,16 @@ static void iqs5xx_work_handler(struct k_work *work) {
 
     bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
     // Optionally require the hold to follow a recent tap (double-tap-and-drag).
+    // The chip only raises PRESS_AND_HOLD *after* the hold time elapses, so by
+    // the time we see it the elapsed time since the tap is roughly
+    // (gap before the second touch) + press_and_hold_time. The qualifying
+    // window must therefore include press_and_hold_time, or the drag never
+    // latches. double_tap_time is the allowed gap between the tap and the
+    // second touch landing.
     bool hold_qualifies = hold_gesture;
     if (config->drag_requires_double_tap) {
-        hold_qualifies =
-            hold_gesture && (k_uptime_get() - data->last_tap_time) <= config->double_tap_time;
+        int64_t window_ms = (int64_t)config->double_tap_time + config->press_and_hold_time;
+        hold_qualifies = hold_gesture && (k_uptime_get() - data->last_tap_time) <= window_ms;
     }
     bool hold_became_active = hold_qualifies && !data->active_hold;
     bool hold_released = !hold_gesture && data->active_hold;
@@ -224,21 +231,31 @@ static void iqs5xx_work_handler(struct k_work *work) {
             goto end_comm;
         }
     } else if (zoom) {
-        // The zoom magnitude (change in distance between the two contacts) is
-        // reported in the relative X register during a zoom gesture. Emit the
-        // two directions on DISTINCT relative codes (not the scroll wheel, and
-        // not via sign) because zmk,input-processor-behaviors keys on the event
-        // code, not its value sign. The host maps each code to a Ctrl+scroll
-        // behavior. INPUT_REL_MISC = expand/zoom in, INPUT_REL_DIAL =
-        // pinch/zoom out (swap on the host if reversed). zoom_div is a coarse
-        // sensitivity divisor.
-        int16_t zoom_div = 4;
-        data->zoom_acc += rel_x;
-        if (abs(data->zoom_acc) >= zoom_div) {
-            int16_t ticks = data->zoom_acc / zoom_div;
-            uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
-            input_report_rel(dev, code, ticks, true, K_FOREVER);
-            data->zoom_acc %= zoom_div;
+        // The IQS5xx only raises a ZOOM *flag* -- no magnitude or direction in
+        // any register -- so compute it from the two contacts' absolute
+        // positions: track the inter-finger distance and emit ticks on its
+        // change. Growing distance = expand (zoom in) on INPUT_REL_MISC;
+        // shrinking = pinch (zoom out) on INPUT_REL_DIAL. Two distinct codes
+        // are used because zmk,input-processor-behaviors keys on the event
+        // code, not the value sign. zoom_div is distance-units per tick (tune
+        // for sensitivity; swap the two codes on the host if reversed).
+        int16_t ax0, ay0, ax1, ay1;
+        if (iqs5xx_read_reg16(dev, IQS5XX_ABS_X, (uint16_t *)&ax0) == 0 &&
+            iqs5xx_read_reg16(dev, IQS5XX_ABS_Y, (uint16_t *)&ay0) == 0 &&
+            iqs5xx_read_reg16(dev, IQS5XX_ABS_X1, (uint16_t *)&ax1) == 0 &&
+            iqs5xx_read_reg16(dev, IQS5XX_ABS_Y1, (uint16_t *)&ay1) == 0) {
+            int32_t dist = abs(ax1 - ax0) + abs(ay1 - ay0);
+            if (data->zoom_prev_dist >= 0) {
+                data->zoom_acc += dist - data->zoom_prev_dist;
+                const int32_t zoom_div = 32;
+                if (abs(data->zoom_acc) >= zoom_div) {
+                    int32_t ticks = data->zoom_acc / zoom_div;
+                    uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
+                    input_report_rel(dev, code, ticks, true, K_FOREVER);
+                    data->zoom_acc -= ticks * zoom_div;
+                }
+            }
+            data->zoom_prev_dist = dist;
         }
         goto end_comm;
     } else if (tp_movement) {
@@ -450,7 +467,7 @@ static int iqs5xx_init(const struct device *dev) {
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \
         .press_and_hold_time = DT_INST_PROP_OR(n, press_and_hold_time, 250),                       \
         .drag_requires_double_tap = DT_INST_PROP(n, drag_requires_double_tap),                     \
-        .double_tap_time = DT_INST_PROP_OR(n, double_tap_time, 300),                               \
+        .double_tap_time = DT_INST_PROP_OR(n, double_tap_time, 400),                               \
         .switch_xy = DT_INST_PROP(n, switch_xy),                                                   \
         .flip_x = DT_INST_PROP(n, flip_x),                                                         \
         .flip_y = DT_INST_PROP(n, flip_y),                                                         \

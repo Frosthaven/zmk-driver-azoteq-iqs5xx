@@ -3,10 +3,13 @@
 #define IQS5XX_NUM_FINGERS 0x0011
 #define IQS5XX_REL_X 0x0012          // 2 bytes.
 #define IQS5XX_REL_Y 0x0014          // 2 bytes.
-#define IQS5XX_ABS_X 0x0016          // 2 bytes.
-#define IQS5XX_ABS_Y 0x0018          // 2 bytes.
+#define IQS5XX_ABS_X 0x0016          // Contact 0 absolute X, 2 bytes.
+#define IQS5XX_ABS_Y 0x0018          // Contact 0 absolute Y, 2 bytes.
 #define IQS5XX_TOUCH_STRENGTH 0x001A // 2 bytes.
 #define IQS5XX_TOUCH_AREA 0x001C
+// Per-finger data is a 7-byte block from 0x0016, so contact 1 starts at 0x001D.
+#define IQS5XX_ABS_X1 0x001D // Contact 1 absolute X, 2 bytes.
+#define IQS5XX_ABS_Y1 0x001F // Contact 1 absolute Y, 2 bytes.
 
 #define IQS5XX_BOTTOM_BETA 0x0637
 #define IQS5XX_STATIONARY_THRESH 0x0672
@@ -155,8 +158,10 @@ struct iqs5xx_data {
     // Scroll accumulators.
     int16_t scroll_x_acc;
     int16_t scroll_y_acc;
-    // Zoom accumulator (signed: +/- = expand/pinch).
-    int16_t zoom_acc;
+    // Zoom accumulator (signed inter-finger-distance change; +/- = expand/pinch).
+    int32_t zoom_acc;
+    // Previous inter-finger distance during a zoom gesture; -1 = no baseline.
+    int32_t zoom_prev_dist;
     // Uptime (ms) of the last single tap, for double-tap-and-hold drag.
     int64_t last_tap_time;
 };

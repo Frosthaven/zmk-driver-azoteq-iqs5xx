@@ -47,7 +47,7 @@ properties:
       Larger = a bigger deliberate pinch is needed, which keeps ordinary
       two-finger scrolls from being misread as zoom; smaller = more sensitive
       but steals scroll.
-    default: 20
+    default: 10
 
   drag-lock:
     type: boolean

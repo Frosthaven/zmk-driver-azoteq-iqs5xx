@@ -300,7 +300,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
         // (datasheet 6.6: negative = pinch/zoom-out, positive = spread/zoom-in).
         // Accumulate and emit one click per tick (see below).
         data->zoom_acc += rel_x;
-        const int32_t zoom_div = 16; // rel-x units per zoom tick (tune for feel)
+        const int32_t zoom_div = 4; // rel-x units per zoom tick (tune for feel)
         if (abs(data->zoom_acc) >= zoom_div) {
             // Emit a KEY click per tick on a dedicated code: the central's
             // behaviors input processor is built for key events (not relative
@@ -538,7 +538,7 @@ static int iqs5xx_init(const struct device *dev) {
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
-        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 20),                     \
+        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 10),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \

@@ -164,4 +164,7 @@ struct iqs5xx_data {
     int32_t zoom_prev_dist;
     // Uptime (ms) of the last single tap, for double-tap-and-hold drag.
     int64_t last_tap_time;
+    // Immediate (no chip-timer) double-tap-drag state.
+    bool manual_drag;
+    uint8_t prev_num_fingers;
 };

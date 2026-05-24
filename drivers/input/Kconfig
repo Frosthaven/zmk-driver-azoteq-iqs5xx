@@ -17,4 +17,13 @@ config INPUT_AZOTEQ_IQS5XX_INIT_PRIORITY
       Driver initialization priority for the IQS5xx driver.
       Lower values initialize earlier.
 
+config INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG
+    bool "Log raw gesture/finger data (debug)"
+    help
+      Emit a LOG_INF line on every multi-finger cycle with the raw gesture
+      event bytes, finger count, and both contacts' absolute coordinates.
+      For diagnosing gesture detection (e.g. zoom). Requires the input log
+      level at INF and a log backend (e.g. CONFIG_ZMK_USB_LOGGING). Noisy;
+      do not ship enabled.
+
 endif # INPUT_AZOTEQ_IQS5XX

@@ -118,6 +118,22 @@ static void iqs5xx_work_handler(struct k_work *work) {
         goto end_comm;
     }
 
+    if (iqs5xx_read_reg8(dev, IQS5XX_NUM_FINGERS, &num_fingers) < 0) {
+        num_fingers = 0;
+    }
+
+#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
+    if (num_fingers >= 1 || gesture_events_0 || gesture_events_1) {
+        int16_t dbg_x0 = 0, dbg_y0 = 0, dbg_x1 = 0, dbg_y1 = 0;
+        iqs5xx_read_reg16(dev, IQS5XX_ABS_X, (uint16_t *)&dbg_x0);
+        iqs5xx_read_reg16(dev, IQS5XX_ABS_Y, (uint16_t *)&dbg_y0);
+        iqs5xx_read_reg16(dev, IQS5XX_ABS_X1, (uint16_t *)&dbg_x1);
+        iqs5xx_read_reg16(dev, IQS5XX_ABS_Y1, (uint16_t *)&dbg_y1);
+        LOG_INF("ge0=0x%02x ge1=0x%02x nf=%d f0=(%d,%d) f1=(%d,%d)", gesture_events_0,
+                gesture_events_1, num_fingers, dbg_x0, dbg_y0, dbg_x1, dbg_y1);
+    }
+#endif
+
     bool tp_movement = (sys_info_1 & IQS5XX_TP_MOVEMENT) != 0;
     bool scroll = (gesture_events_1 & IQS5XX_SCROLL) != 0;
     if (!scroll) {
@@ -146,18 +162,10 @@ static void iqs5xx_work_handler(struct k_work *work) {
     }
 
     bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
-    // Optionally require the hold to follow a recent tap (double-tap-and-drag).
-    // The chip only raises PRESS_AND_HOLD *after* the hold time elapses, so by
-    // the time we see it the elapsed time since the tap is roughly
-    // (gap before the second touch) + press_and_hold_time. The qualifying
-    // window must therefore include press_and_hold_time, or the drag never
-    // latches. double_tap_time is the allowed gap between the tap and the
-    // second touch landing.
-    bool hold_qualifies = hold_gesture;
-    if (config->drag_requires_double_tap) {
-        int64_t window_ms = (int64_t)config->double_tap_time + config->press_and_hold_time;
-        hold_qualifies = hold_gesture && (k_uptime_get() - data->last_tap_time) <= window_ms;
-    }
+    // In double-tap-drag mode the drag is latched immediately on the post-tap
+    // touch (manual-drag handling below) without waiting for the chip's hold
+    // timer, so the chip's press-and-hold path is disabled entirely.
+    bool hold_qualifies = config->drag_requires_double_tap ? false : hold_gesture;
     bool hold_became_active = hold_qualifies && !data->active_hold;
     bool hold_released = !hold_gesture && data->active_hold;
 
@@ -175,6 +183,26 @@ static void iqs5xx_work_handler(struct k_work *work) {
             goto end_comm;
         }
     }
+
+    // Immediate double-tap-drag: latch the left button as soon as a finger
+    // lands shortly after a tap -- no waiting for the chip's hold timer. The
+    // held button + subsequent movement (handled by the tp_movement branch)
+    // produces a click-and-drag; release when the finger lifts.
+    if (config->drag_requires_double_tap) {
+        bool touch_started = (num_fingers >= 1) && (data->prev_num_fingers == 0);
+        if (touch_started && !data->manual_drag &&
+            (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
+            // Cancel any pending tap-release so it can't drop the button mid-drag.
+            k_work_cancel_delayable(&data->button_release_work);
+            data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
+            input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+            data->manual_drag = true;
+        } else if ((num_fingers == 0) && data->manual_drag) {
+            input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+            data->manual_drag = false;
+        }
+    }
+    data->prev_num_fingers = num_fingers;
 
     // Handle movement and gestures.
     //
@@ -259,12 +287,6 @@ static void iqs5xx_work_handler(struct k_work *work) {
         }
         goto end_comm;
     } else if (tp_movement) {
-        ret = iqs5xx_read_reg8(dev, IQS5XX_NUM_FINGERS, &num_fingers);
-        if (ret < 0) {
-            LOG_ERR("Failed to read number of fingers: %d", ret);
-            goto end_comm;
-        }
-
         if (rel_x != 0 || rel_y != 0) {
             input_report_rel(dev, INPUT_REL_X, rel_x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_FOREVER);

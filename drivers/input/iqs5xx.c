@@ -259,14 +259,19 @@ static void iqs5xx_work_handler(struct k_work *work) {
             goto end_comm;
         }
     } else if (zoom) {
+#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
+        // Diagnostic: scroll a fixed amount on every cycle the chip raises
+        // ZOOM, bypassing the finger-distance math, to confirm the gesture is
+        // detected at all. If a pinch/spread scrolls the page, ZOOM fires.
+        input_report_rel(dev, INPUT_REL_WHEEL, 1, true, K_FOREVER);
+#else
         // The IQS5xx only raises a ZOOM *flag* -- no magnitude or direction in
         // any register -- so compute it from the two contacts' absolute
         // positions: track the inter-finger distance and emit ticks on its
         // change. Growing distance = expand (zoom in) on INPUT_REL_MISC;
         // shrinking = pinch (zoom out) on INPUT_REL_DIAL. Two distinct codes
         // are used because zmk,input-processor-behaviors keys on the event
-        // code, not the value sign. zoom_div is distance-units per tick (tune
-        // for sensitivity; swap the two codes on the host if reversed).
+        // code, not the value sign. zoom_div is distance-units per tick.
         int16_t ax0, ay0, ax1, ay1;
         if (iqs5xx_read_reg16(dev, IQS5XX_ABS_X, (uint16_t *)&ax0) == 0 &&
             iqs5xx_read_reg16(dev, IQS5XX_ABS_Y, (uint16_t *)&ay0) == 0 &&
@@ -275,28 +280,17 @@ static void iqs5xx_work_handler(struct k_work *work) {
             int32_t dist = abs(ax1 - ax0) + abs(ay1 - ay0);
             if (data->zoom_prev_dist >= 0) {
                 data->zoom_acc += dist - data->zoom_prev_dist;
-#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
-                // Diagnostic: emit zoom as a sensitive plain scroll so a pinch
-                // is visibly testable on any host, with no Ctrl+scroll mapping.
-                // If the page scrolls during a pinch, the chip+driver detect
-                // zoom and the issue is purely the host-side mapping.
-                const int32_t zoom_div = 8;
-#else
                 const int32_t zoom_div = 32;
-#endif
                 if (abs(data->zoom_acc) >= zoom_div) {
                     int32_t ticks = data->zoom_acc / zoom_div;
-#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
-                    input_report_rel(dev, INPUT_REL_WHEEL, ticks, true, K_FOREVER);
-#else
                     uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
                     input_report_rel(dev, code, ticks, true, K_FOREVER);
-#endif
                     data->zoom_acc -= ticks * zoom_div;
                 }
             }
             data->zoom_prev_dist = dist;
         }
+#endif
         goto end_comm;
     } else if (tp_movement) {
         if (rel_x != 0 || rel_y != 0) {
@@ -373,8 +367,14 @@ static int iqs5xx_setup_device(const struct device *dev) {
 
     uint8_t two_finger_gestures = 0;
     two_finger_gestures |= config->two_finger_tap ? IQS5XX_TWO_FINGER_TAP : 0;
+#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
+    // Diagnostic: enable ZOOM only (no scroll) so a pinch can't be classified
+    // as scroll instead, isolating whether the chip raises ZOOM at all.
+    two_finger_gestures |= IQS5XX_ZOOM;
+#else
     two_finger_gestures |= config->scroll ? IQS5XX_SCROLL : 0;
     two_finger_gestures |= config->zoom ? IQS5XX_ZOOM : 0;
+#endif
     // Configure multi finger gestures.
     ret = iqs5xx_write_reg8(dev, IQS5XX_MULTI_FINGER_GESTURES_CONF, two_finger_gestures);
     if (ret < 0) {

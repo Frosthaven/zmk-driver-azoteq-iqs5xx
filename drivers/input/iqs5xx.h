@@ -97,6 +97,12 @@
 #define IQS5XX_TAP_MS_MAX 300
 #define IQS5XX_TAP_MOVE_MAX 50
 
+// A post-tap touch latches a drag-lock once it is either HELD this long (ms) or
+// has MOVED more than DRAG_LATCH_MOVE (just above tap jitter, so a stationary
+// double-tap never latches but an immediate tap-then-drag does).
+#define IQS5XX_DRAG_LATCH_HOLD_MS 120
+#define IQS5XX_DRAG_LATCH_MOVE 60
+
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
 #define RIGHT_BUTTON_BIT BIT(1)
@@ -104,6 +110,12 @@
 #define LEFT_BUTTON_CODE INPUT_BTN_0
 #define RIGHT_BUTTON_CODE INPUT_BTN_0 + 1
 #define MIDDLE_BUTTON_CODE INPUT_BTN_0 + 2
+
+// Synthetic key codes for the two zoom directions. Emitted as key clicks so the
+// central's zmk,input-processor-behaviors (a key-event processor) maps them to
+// Ctrl+scroll. Spare button codes that don't collide with L/R/M clicks.
+#define ZOOM_IN_CODE (INPUT_BTN_0 + 4)
+#define ZOOM_OUT_CODE (INPUT_BTN_0 + 5)
 
 // These 2 registers have the same bit map.
 // The first one configures the gestures,

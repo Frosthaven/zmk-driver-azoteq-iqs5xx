@@ -43,10 +43,11 @@ properties:
     type: int
     description: |
       Change (in sensor pixels) in the two contacts' separation needed to
-      trigger a zoom, and also used for the per-event consecutive distance. The
-      chip defaults are large enough that zoom can feel dead; smaller = more
-      sensitive and more continuous.
-    default: 5
+      trigger a zoom, and also used for the per-event consecutive distance.
+      Larger = a bigger deliberate pinch is needed, which keeps ordinary
+      two-finger scrolls from being misread as zoom; smaller = more sensitive
+      but steals scroll.
+    default: 50
 
   drag-requires-double-tap:
     type: boolean

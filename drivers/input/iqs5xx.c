@@ -241,18 +241,27 @@ static void iqs5xx_work_handler(struct k_work *work) {
         data->touch_max_fingers = 0;
     }
 
-    // Double-tap-drag: a single tap then a single-finger touch (within
-    // double_tap_time) latches the left button as a drag-LOCK. It stays held
-    // across finger lifts and is ended by a tap, handled on lift above.
-    if (config->drag_requires_double_tap && !data->manual_drag) {
-        bool touch_started = (num_fingers == 1) && (data->prev_num_fingers == 0);
-        if (touch_started && data->last_tap_time != 0 &&
-            (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
-            k_work_cancel_delayable(&data->button_release_work);
-            data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
-            input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
-            data->manual_drag = true;
-        }
+    // Double-tap-drag: a single tap, then a single-finger touch that is HELD a
+    // moment (tap-then-hold), latches the left button as a drag-LOCK. It stays
+    // held across finger lifts and is ended by a tap (handled on lift above).
+    //
+    // Latching requires the post-tap touch to either be HELD a moment or to have
+    // MOVED -- NOT merely to start. This fixes single taps "randomly" dying: the
+    // old code latched on any quick re-touch, so a double-tap or fast tapping
+    // armed a hidden drag-lock that then swallowed every following tap. A quick
+    // stationary second tap now stays a plain (double-)click. The movement path
+    // means an immediate "tap, then drag" (no deliberate pause) still latches
+    // right away once the finger has moved past tap jitter.
+    if (config->drag_requires_double_tap && !data->manual_drag && data->last_tap_time != 0 &&
+        num_fingers == 1 &&
+        (data->touch_start_time - data->last_tap_time) <= config->double_tap_time &&
+        ((k_uptime_get() - data->touch_start_time) >= IQS5XX_DRAG_LATCH_HOLD_MS ||
+         data->touch_move_acc > IQS5XX_DRAG_LATCH_MOVE)) {
+        k_work_cancel_delayable(&data->button_release_work);
+        data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
+        input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+        data->manual_drag = true;
+        data->last_tap_time = 0; // consume; don't re-arm
     }
     data->prev_num_fingers = num_fingers;
 
@@ -301,18 +310,20 @@ static void iqs5xx_work_handler(struct k_work *work) {
             goto end_comm;
         }
     } else if (zoom) {
-        // Zoom magnitude/direction is the signed Relative-X value during a zoom
-        // gesture (datasheet 6.6: negative = pinch/zoom-out, positive =
-        // spread/zoom-in). Accumulate and emit ticks: positive on INPUT_REL_MISC,
-        // negative on INPUT_REL_DIAL -- two codes because the host's
-        // input-processor keys on the event code, not the value's sign.
+        // Zoom magnitude/direction is the signed Relative-X during a zoom gesture
+        // (datasheet 6.6: negative = pinch/zoom-out, positive = spread/zoom-in).
+        // Accumulate and emit one click per tick (see below).
         data->zoom_acc += rel_x;
         const int32_t zoom_div = 16; // rel-x units per zoom tick (tune for feel)
         if (abs(data->zoom_acc) >= zoom_div) {
-            int32_t ticks = data->zoom_acc / zoom_div;
-            uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
-            input_report_rel(dev, code, ticks, true, K_FOREVER);
-            data->zoom_acc -= ticks * zoom_div;
+            // Emit a KEY click per tick on a dedicated code: the central's
+            // behaviors input processor is built for key events (not relative
+            // ones) and maps these to Ctrl+scroll. Spread -> ZOOM_IN_CODE,
+            // pinch -> ZOOM_OUT_CODE.
+            uint16_t code = (data->zoom_acc > 0) ? ZOOM_IN_CODE : ZOOM_OUT_CODE;
+            input_report_key(dev, code, 1, false, K_FOREVER);
+            input_report_key(dev, code, 0, true, K_FOREVER);
+            data->zoom_acc += (data->zoom_acc > 0) ? -zoom_div : zoom_div;
         }
         goto end_comm;
     } else if (tp_movement) {
@@ -541,7 +552,7 @@ static int iqs5xx_init(const struct device *dev) {
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
-        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 5),                      \
+        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 50),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \

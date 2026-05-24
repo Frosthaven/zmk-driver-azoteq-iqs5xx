@@ -90,6 +90,13 @@
 #define IQS5XX_HOLD_TIME 0x06BD
 // TODO: Make hold time configurable with KConfig.
 
+// Synthesized-tap thresholds: a touch counts as a tap if it lasts no longer
+// than TAP_MS_MAX and accumulates no more than TAP_MOVE_MAX of motion (sum of
+// |rel_x|+|rel_y| over the touch). Used to tell taps from drags/scrolls and to
+// end a drag-lock on a stationary lift.
+#define IQS5XX_TAP_MS_MAX 300
+#define IQS5XX_TAP_MOVE_MAX 50
+
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
 #define RIGHT_BUTTON_BIT BIT(1)

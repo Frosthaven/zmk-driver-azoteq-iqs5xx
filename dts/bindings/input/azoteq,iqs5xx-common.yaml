@@ -61,7 +61,7 @@ properties:
       Max ms gap between the single tap and the second touch landing for
       drag-requires-double-tap. The touch latches the drag-lock immediately on
       contact (no hold-time wait); the lock is then ended by a tap.
-    default: 400
+    default: 275
 
   scroll:
     type: boolean

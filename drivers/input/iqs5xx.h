@@ -108,6 +108,10 @@
 #define IQS5XX_SCROLL BIT(1)
 #define IQS5XX_ZOOM BIT(2)
 
+// Two-finger zoom config: minimum change in contact separation to trigger a
+// zoom gesture. The chip default can be too large to ever fire.
+#define IQS5XX_ZOOM_INITIAL_DISTANCE 0x06CB // 2 bytes.
+
 // Axes configuration.
 #define IQS5XX_XY_CONFIG_0 0x0669
 #define IQS5XX_FLIP_X BIT(0)
@@ -124,6 +128,7 @@ struct iqs5xx_config {
     bool press_and_hold;
     bool two_finger_tap;
     bool zoom;
+    uint16_t zoom_initial_distance;
     uint16_t press_and_hold_time;
     // When set, a press-and-hold only latches a drag if it follows a single
     // tap within double_tap_time ms (macOS-style double-tap-and-drag).
@@ -158,10 +163,8 @@ struct iqs5xx_data {
     // Scroll accumulators.
     int16_t scroll_x_acc;
     int16_t scroll_y_acc;
-    // Zoom accumulator (signed inter-finger-distance change; +/- = expand/pinch).
+    // Zoom accumulator: summed signed Relative-X during a zoom gesture.
     int32_t zoom_acc;
-    // Previous inter-finger distance during a zoom gesture; -1 = no baseline.
-    int32_t zoom_prev_dist;
     // Uptime (ms) of the last single tap, for double-tap-and-hold drag.
     int64_t last_tap_time;
     // Immediate (no chip-timer) double-tap-drag state.

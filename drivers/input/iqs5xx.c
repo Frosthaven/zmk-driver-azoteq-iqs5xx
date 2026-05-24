@@ -145,7 +145,6 @@ static void iqs5xx_work_handler(struct k_work *work) {
     bool zoom = (gesture_events_1 & IQS5XX_ZOOM) != 0;
     if (!zoom) {
         data->zoom_acc = 0;
-        data->zoom_prev_dist = -1;
     }
 
     uint16_t button_code;
@@ -184,22 +183,25 @@ static void iqs5xx_work_handler(struct k_work *work) {
         }
     }
 
-    // Immediate double-tap-drag: latch the left button as soon as a finger
-    // lands shortly after a tap -- no waiting for the chip's hold timer. The
-    // held button + subsequent movement (handled by the tp_movement branch)
-    // produces a click-and-drag; release when the finger lifts.
+    // Double-tap-drag with drag-lock: a tap, then a touch, latches the left
+    // button immediately (no chip hold timer). The button stays held across
+    // finger lifts -- so you can drag in multiple strokes -- and a TAP ends it.
     if (config->drag_requires_double_tap) {
-        bool touch_started = (num_fingers >= 1) && (data->prev_num_fingers == 0);
-        if (touch_started && !data->manual_drag &&
-            (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
-            // Cancel any pending tap-release so it can't drop the button mid-drag.
+        bool single_tap = (gesture_events_0 & IQS5XX_SINGLE_TAP) != 0;
+        bool touch_started = (num_fingers == 1) && (data->prev_num_fingers == 0);
+        if (data->manual_drag && single_tap) {
+            // Tap ends the locked drag.
+            input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+            data->manual_drag = false;
+            button_pressed = false;   // consume the end tap; don't also click
+            data->last_tap_time = 0;  // and don't let it start a new drag
+        } else if (!data->manual_drag && touch_started &&
+                   (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
+            // Latch the drag on the touch that follows a tap.
             k_work_cancel_delayable(&data->button_release_work);
             data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
             input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
             data->manual_drag = true;
-        } else if ((num_fingers == 0) && data->manual_drag) {
-            input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
-            data->manual_drag = false;
         }
     }
     data->prev_num_fingers = num_fingers;
@@ -259,38 +261,19 @@ static void iqs5xx_work_handler(struct k_work *work) {
             goto end_comm;
         }
     } else if (zoom) {
-#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
-        // Diagnostic: scroll a fixed amount on every cycle the chip raises
-        // ZOOM, bypassing the finger-distance math, to confirm the gesture is
-        // detected at all. If a pinch/spread scrolls the page, ZOOM fires.
-        input_report_rel(dev, INPUT_REL_WHEEL, 1, true, K_FOREVER);
-#else
-        // The IQS5xx only raises a ZOOM *flag* -- no magnitude or direction in
-        // any register -- so compute it from the two contacts' absolute
-        // positions: track the inter-finger distance and emit ticks on its
-        // change. Growing distance = expand (zoom in) on INPUT_REL_MISC;
-        // shrinking = pinch (zoom out) on INPUT_REL_DIAL. Two distinct codes
-        // are used because zmk,input-processor-behaviors keys on the event
-        // code, not the value sign. zoom_div is distance-units per tick.
-        int16_t ax0, ay0, ax1, ay1;
-        if (iqs5xx_read_reg16(dev, IQS5XX_ABS_X, (uint16_t *)&ax0) == 0 &&
-            iqs5xx_read_reg16(dev, IQS5XX_ABS_Y, (uint16_t *)&ay0) == 0 &&
-            iqs5xx_read_reg16(dev, IQS5XX_ABS_X1, (uint16_t *)&ax1) == 0 &&
-            iqs5xx_read_reg16(dev, IQS5XX_ABS_Y1, (uint16_t *)&ay1) == 0) {
-            int32_t dist = abs(ax1 - ax0) + abs(ay1 - ay0);
-            if (data->zoom_prev_dist >= 0) {
-                data->zoom_acc += dist - data->zoom_prev_dist;
-                const int32_t zoom_div = 32;
-                if (abs(data->zoom_acc) >= zoom_div) {
-                    int32_t ticks = data->zoom_acc / zoom_div;
-                    uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
-                    input_report_rel(dev, code, ticks, true, K_FOREVER);
-                    data->zoom_acc -= ticks * zoom_div;
-                }
-            }
-            data->zoom_prev_dist = dist;
+        // Zoom magnitude/direction is the signed Relative-X value during a zoom
+        // gesture (per the chip's gesture interface and the rwalkr/iqs5xx
+        // reference). Accumulate and emit ticks: positive = spread/zoom-in on
+        // INPUT_REL_MISC, negative = pinch/zoom-out on INPUT_REL_DIAL. Two codes
+        // because the host's input-processor keys on the event code, not sign.
+        data->zoom_acc += rel_x;
+        const int32_t zoom_div = 16; // rel-x units per zoom tick (tune for feel)
+        if (abs(data->zoom_acc) >= zoom_div) {
+            int32_t ticks = data->zoom_acc / zoom_div;
+            uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
+            input_report_rel(dev, code, ticks, true, K_FOREVER);
+            data->zoom_acc -= ticks * zoom_div;
         }
-#endif
         goto end_comm;
     } else if (tp_movement) {
         if (rel_x != 0 || rel_y != 0) {
@@ -367,19 +350,24 @@ static int iqs5xx_setup_device(const struct device *dev) {
 
     uint8_t two_finger_gestures = 0;
     two_finger_gestures |= config->two_finger_tap ? IQS5XX_TWO_FINGER_TAP : 0;
-#if IS_ENABLED(CONFIG_INPUT_AZOTEQ_IQS5XX_GESTURE_DEBUG)
-    // Diagnostic: enable ZOOM only (no scroll) so a pinch can't be classified
-    // as scroll instead, isolating whether the chip raises ZOOM at all.
-    two_finger_gestures |= IQS5XX_ZOOM;
-#else
     two_finger_gestures |= config->scroll ? IQS5XX_SCROLL : 0;
     two_finger_gestures |= config->zoom ? IQS5XX_ZOOM : 0;
-#endif
     // Configure multi finger gestures.
     ret = iqs5xx_write_reg8(dev, IQS5XX_MULTI_FINGER_GESTURES_CONF, two_finger_gestures);
     if (ret < 0) {
         LOG_ERR("Failed to configure multi finger gestures: %d", ret);
         return ret;
+    }
+
+    // The zoom gesture only fires once the two contacts' separation changes by
+    // at least this much; the chip's default can be too large to ever trigger,
+    // so set it explicitly. Smaller = more sensitive.
+    if (config->zoom) {
+        ret = iqs5xx_write_reg16(dev, IQS5XX_ZOOM_INITIAL_DISTANCE, config->zoom_initial_distance);
+        if (ret < 0) {
+            LOG_ERR("Failed to configure zoom initial distance: %d", ret);
+            return ret;
+        }
     }
 
     // Configure axes.
@@ -496,6 +484,7 @@ static int iqs5xx_init(const struct device *dev) {
         .press_and_hold = DT_INST_PROP(n, press_and_hold),                                         \
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
+        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 25),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \

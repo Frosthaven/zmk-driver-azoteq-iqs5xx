@@ -27,10 +27,18 @@ properties:
   zoom:
     type: boolean
     description: |
-      Register two-finger zoom (pinch/expand) gestures and report the signed
-      magnitude on the INPUT_REL_MISC relative code (positive = expand/zoom in,
-      negative = pinch/zoom out). Map it to Ctrl+scroll on the host with a
+      Register two-finger zoom (pinch/expand) gestures. The signed magnitude is
+      emitted on INPUT_REL_MISC (expand/zoom in) and INPUT_REL_DIAL (pinch/zoom
+      out); map both to Ctrl+scroll on the host with a
       zmk,input-processor-behaviors processor.
+
+  zoom-initial-distance:
+    type: int
+    description: |
+      Minimum change (in sensor units) in the two contacts' separation before a
+      zoom gesture fires. The chip default can be too large to ever trigger;
+      smaller = more sensitive.
+    default: 25
 
   drag-requires-double-tap:
     type: boolean

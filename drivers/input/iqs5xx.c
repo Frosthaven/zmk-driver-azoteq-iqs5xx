@@ -211,15 +211,17 @@ static void iqs5xx_work_handler(struct k_work *work) {
         uint8_t peak = data->touch_max_fingers;
         if (data->manual_drag) {
             // End the drag-lock on a stationary (low-movement) lift; a lift with
-            // movement is just a drag stroke and keeps the lock. A 2-/3-finger
-            // end tap also issues its click. The end tap never arms a new drag.
-            if (low_move) {
+            // movement is just a drag stroke and keeps the lock. A multi-finger
+            // tap (2 or 3 fingers) ALWAYS ends it -- a guaranteed escape so the
+            // lock can never get stuck -- and issues its click when it was a
+            // clean tap. The end tap never arms a new drag.
+            if (low_move || peak >= 2) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
                 data->last_tap_time = 0;
-                if (peak == 2 && config->two_finger_tap) {
+                if (low_move && peak == 2 && config->two_finger_tap) {
                     iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
-                } else if (peak == 3 && config->three_finger_tap) {
+                } else if (low_move && peak == 3 && config->three_finger_tap) {
                     iqs5xx_emit_click(dev, data, MIDDLE_BUTTON_CODE);
                 }
             }

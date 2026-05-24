@@ -12,20 +12,20 @@
 >   finger count seen during the touch. A staggered multi-finger landing resolves
 >   correctly (no early/stray right-click before the 3rd finger), and a
 >   leftover finger after a scroll can no longer drag the cursor.
-> - **Double-tap-and-drag LOCK.** New `drag-requires-double-tap` (+
->   `double-tap-time`, default 275 ms) properties. A single tap then a touch
->   within the window latches the left button as a drag that stays held across
->   finger lifts (drag-lock); a stationary tap ends it (a 2-/3-finger tap ends it
->   *and* issues its click). A bare press-and-hold just moves the cursor.
-> - **Two-finger zoom (pinch/expand) — plumbing only, non-functional in
->   practice.** New `zoom` (+ `zoom-initial-distance`) property. The driver
->   enables the chip's zoom gesture and emits its two directions on
->   `INPUT_REL_MISC` (expand) / `INPUT_REL_DIAL` (pinch) for a Ctrl+scroll
->   mapping (see Usage). **However, the IQS5xx does not appear to raise the zoom
->   gesture** on the modules tested, and no known implementation (QMK, the rwalkr
->   Rust crate, the Linux kernel driver) exercises it either. The code is left in
->   place in case a future module/config fires it; treat pinch-zoom as
->   unsupported on current hardware.
+> - **Press-and-hold drag-lock.** New `drag-lock` property. A press-and-hold
+>   latches the left button as a drag that stays held across finger lifts; a tap
+>   releases it (a 2-/3-finger tap also releases — a guaranteed escape so it can
+>   never get stuck). With `drag-lock` unset, press-and-hold is the classic
+>   momentary hold (releases on lift). Starting a drag from a *press-and-hold*
+>   rather than a tap means no stray first click — so dragging a multi-file
+>   selection doesn't deselect it and doesn't double-click-open files.
+> - **Two-finger zoom (pinch/expand) — experimental.** New `zoom` (+
+>   `zoom-initial-distance`) property. The chip's zoom gesture is emitted as KEY
+>   clicks on spare button codes (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`),
+>   which a central `zmk,input-processor-behaviors` maps to Ctrl+scroll (see
+>   Usage). Zoom competes with two-finger scroll and only fires once the pinch
+>   exceeds `zoom-initial-distance`, so expect to tune that per module — and on
+>   some units the chip may not raise it at all. Treat as experimental.
 >
 > Not changed: scroll axis is still chosen by the chip's gesture engine based on
 > the two contacts' geometry — the IQS5xx exposes no register to decouple scroll
@@ -53,15 +53,14 @@ Feel free to send a pull request if you test with any of the following models:
 - Single finger tap: left click (synthesized on lift).
 - Two finger tap: right click (synthesized on lift by peak finger count).
 - Three finger tap: middle click (fork; `three-finger-tap`).
-- Press and hold: continuous left click (allows click and drag).
-- Double-tap-and-drag lock (fork): with `drag-requires-double-tap`, a tap then a
-  touch latches a drag that holds across lifts and ends on a stationary tap.
+- Press and hold: continuous left click (allows click and drag). With `drag-lock`
+  it latches a persistent drag held across finger lifts, released by a tap.
 - Vertical scroll.
 - Horizontal scroll.
-- Two-finger zoom / pinch+expand (fork): **implemented but non-functional on
-  tested IQS5xx hardware** — the chip does not raise the zoom gesture in
-  practice. Plumbing (expand on `INPUT_REL_MISC`, pinch on `INPUT_REL_DIAL`,
-  mapped to Ctrl+scroll) is left in place; treat as unsupported.
+- Two-finger zoom / pinch+expand (fork; **experimental**): emitted as key clicks
+  (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`) for a central Ctrl+scroll
+  mapping. Competes with scroll and gated by `zoom-initial-distance`; may need
+  per-module tuning and may not fire on every unit.
 
 ## Usage
 
@@ -100,9 +99,10 @@ Feel free to send a pull request if you test with any of the following models:
         natural-scroll-x;
 
         /* Fork additions: */
-        zoom;                       /* two-finger pinch/expand -> INPUT_REL_MISC */
-        drag-requires-double-tap;   /* press-and-hold only drags after a tap */
-        double-tap-time = <300>;
+        three-finger-tap;           /* three-finger tap -> middle click */
+        zoom;                       /* two-finger pinch/expand -> key clicks (experimental) */
+        zoom-initial-distance = <20>;
+        drag-lock;                  /* press-and-hold latches a drag; tap releases */
 
         bottom-beta = <5>;
         stationary-threshold = <5>;
@@ -114,9 +114,10 @@ Feel free to send a pull request if you test with any of the following models:
 
 ### Mapping zoom to Ctrl+scroll on the host
 
-The driver emits the zoom magnitude on `INPUT_REL_MISC`; it does not itself send
-Ctrl. On the central (the half that talks to the computer), turn it into a zoom
-with a behaviors input-processor:
+The driver emits the zoom as key clicks (`INPUT_BTN_4` = spread, `INPUT_BTN_5` =
+pinch); it does not itself send Ctrl. On the central (the half that talks to the
+computer), turn those into a zoom with a behaviors input-processor (it is built
+for key events, hence the key-click output):
 
 ```
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -140,8 +141,8 @@ with a behaviors input-processor:
     zoom_proc: zoom_proc {
         compatible = "zmk,input-processor-behaviors";
         #input-processor-cells = <0>;
-        type = <INPUT_EV_REL>;
-        codes = <INPUT_REL_MISC INPUT_REL_DIAL>; /* expand, pinch */
+        type = <INPUT_EV_KEY>;
+        codes = <INPUT_BTN_4 INPUT_BTN_5>; /* spread (zoom in), pinch (zoom out) */
         bindings = <&zoom_in &zoom_out>;
     };
 };

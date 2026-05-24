@@ -47,22 +47,15 @@ properties:
       Larger = a bigger deliberate pinch is needed, which keeps ordinary
       two-finger scrolls from being misread as zoom; smaller = more sensitive
       but steals scroll.
-    default: 50
+    default: 20
 
-  drag-requires-double-tap:
+  drag-lock:
     type: boolean
     description: |
-      When set, a press-and-hold only latches a drag (held left button) if it
-      begins within 'double-tap-time' ms of a single tap (macOS-style
-      double-tap-and-drag). A bare press-and-hold then just moves the cursor.
-
-  double-tap-time:
-    type: int
-    description: |
-      Max ms gap between the single tap and the second touch landing for
-      drag-requires-double-tap. The touch latches the drag-lock immediately on
-      contact (no hold-time wait); the lock is then ended by a tap.
-    default: 275
+      When set, a press-and-hold latches a persistent drag-LOCK: the left button
+      stays held across finger lifts (so a drag can span multiple strokes) and is
+      released by a tap. When unset, press-and-hold is momentary -- the button is
+      held only while the finger stays down and releases on lift.
 
   scroll:
     type: boolean

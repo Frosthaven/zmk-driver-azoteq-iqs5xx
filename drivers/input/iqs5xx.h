@@ -97,12 +97,6 @@
 #define IQS5XX_TAP_MS_MAX 300
 #define IQS5XX_TAP_MOVE_MAX 50
 
-// A post-tap touch latches a drag-lock once it is either HELD this long (ms) or
-// has MOVED more than DRAG_LATCH_MOVE (just above tap jitter, so a stationary
-// double-tap never latches but an immediate tap-then-drag does).
-#define IQS5XX_DRAG_LATCH_HOLD_MS 120
-#define IQS5XX_DRAG_LATCH_MOVE 60
-
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
 #define RIGHT_BUTTON_BIT BIT(1)
@@ -152,10 +146,9 @@ struct iqs5xx_config {
     bool zoom;
     uint16_t zoom_initial_distance;
     uint16_t press_and_hold_time;
-    // When set, a press-and-hold only latches a drag if it follows a single
-    // tap within double_tap_time ms (macOS-style double-tap-and-drag).
-    bool drag_requires_double_tap;
-    uint16_t double_tap_time;
+    // When set, a press-and-hold latches a persistent drag-LOCK released by a
+    // tap (instead of a momentary hold released when the finger lifts).
+    bool drag_lock;
 
     // Scrolling configuration.
     bool scroll;
@@ -187,9 +180,7 @@ struct iqs5xx_data {
     int16_t scroll_y_acc;
     // Zoom accumulator: summed signed Relative-X during a zoom gesture.
     int32_t zoom_acc;
-    // Uptime (ms) of the last single tap, for double-tap-and-hold drag.
-    int64_t last_tap_time;
-    // Immediate (no chip-timer) double-tap-drag state.
+    // Press-and-hold drag-lock active (held across finger lifts; ended by a tap).
     bool manual_drag;
     uint8_t prev_num_fingers;
     // Touch-sequence tracking for synthesized multi-finger taps and for

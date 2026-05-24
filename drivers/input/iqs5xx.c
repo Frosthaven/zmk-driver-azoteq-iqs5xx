@@ -163,11 +163,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
     }
 
     bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
-    // In double-tap-drag mode the drag is latched immediately on the post-tap
-    // touch (manual-drag handling below) without waiting for the chip's hold
-    // timer, so the chip's press-and-hold path is disabled entirely.
-    bool hold_qualifies = config->drag_requires_double_tap ? false : hold_gesture;
-    bool hold_became_active = hold_qualifies && !data->active_hold;
+    bool hold_became_active = hold_gesture && !data->active_hold;
     bool hold_released = !hold_gesture && data->active_hold;
 
     int16_t rel_x, rel_y;
@@ -210,15 +206,14 @@ static void iqs5xx_work_handler(struct k_work *work) {
         bool quick = (k_uptime_get() - data->touch_start_time) <= IQS5XX_TAP_MS_MAX;
         uint8_t peak = data->touch_max_fingers;
         if (data->manual_drag) {
-            // End the drag-lock on a stationary (low-movement) lift; a lift with
-            // movement is just a drag stroke and keeps the lock. A multi-finger
-            // tap (2 or 3 fingers) ALWAYS ends it -- a guaranteed escape so the
-            // lock can never get stuck -- and issues its click when it was a
-            // clean tap. The end tap never arms a new drag.
+            // Tap to drop the press-and-hold drag-lock: end on a stationary
+            // (low-movement) lift; a lift with movement is just a drag stroke and
+            // keeps the lock. A multi-finger tap (2 or 3 fingers) ALWAYS ends it
+            // -- a guaranteed escape so the lock can never get stuck -- and
+            // issues its click when it was a clean tap.
             if (low_move || peak >= 2) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
-                data->last_tap_time = 0;
                 if (low_move && peak == 2 && config->two_finger_tap) {
                     iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
                 } else if (low_move && peak == 3 && config->three_finger_tap) {
@@ -231,7 +226,6 @@ static void iqs5xx_work_handler(struct k_work *work) {
             // touching down first can't sneak in an early left click.
             if (peak == 1 && config->one_finger_tap) {
                 iqs5xx_emit_click(dev, data, LEFT_BUTTON_CODE);
-                data->last_tap_time = k_uptime_get(); // arm a possible drag
             } else if (peak == 2 && config->two_finger_tap) {
                 iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
             } else if (peak == 3 && config->three_finger_tap) {
@@ -239,29 +233,6 @@ static void iqs5xx_work_handler(struct k_work *work) {
             }
         }
         data->touch_max_fingers = 0;
-    }
-
-    // Double-tap-drag: a single tap, then a single-finger touch that is HELD a
-    // moment (tap-then-hold), latches the left button as a drag-LOCK. It stays
-    // held across finger lifts and is ended by a tap (handled on lift above).
-    //
-    // Latching requires the post-tap touch to either be HELD a moment or to have
-    // MOVED -- NOT merely to start. This fixes single taps "randomly" dying: the
-    // old code latched on any quick re-touch, so a double-tap or fast tapping
-    // armed a hidden drag-lock that then swallowed every following tap. A quick
-    // stationary second tap now stays a plain (double-)click. The movement path
-    // means an immediate "tap, then drag" (no deliberate pause) still latches
-    // right away once the finger has moved past tap jitter.
-    if (config->drag_requires_double_tap && !data->manual_drag && data->last_tap_time != 0 &&
-        num_fingers == 1 &&
-        (data->touch_start_time - data->last_tap_time) <= config->double_tap_time &&
-        ((k_uptime_get() - data->touch_start_time) >= IQS5XX_DRAG_LATCH_HOLD_MS ||
-         data->touch_move_acc > IQS5XX_DRAG_LATCH_MOVE)) {
-        k_work_cancel_delayable(&data->button_release_work);
-        data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
-        input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
-        data->manual_drag = true;
-        data->last_tap_time = 0; // consume; don't re-arm
     }
     data->prev_num_fingers = num_fingers;
 
@@ -271,12 +242,27 @@ static void iqs5xx_work_handler(struct k_work *work) {
     // sync to ensure that the input subsystem processes things in order.
     if (hold_became_active) {
         LOG_INF("Hold became active");
-        input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
         data->active_hold = true;
+        if (config->drag_lock) {
+            // A plain press-and-hold (no preceding tap) also latches the drag-
+            // LOCK -- a clean drag with no tap-click first, so it can grab a
+            // multi-file selection without the tap deselecting it. Persists
+            // across lifts; ended by a tap, like the tap-then-hold drag.
+            if (!data->manual_drag) {
+                input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+                data->manual_drag = true;
+            }
+        } else {
+            input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+        }
     } else if (hold_released) {
         LOG_INF("Hold became inactive");
-        input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
         data->active_hold = false;
+        // In drag-lock mode the lock persists across lifts (ended by a tap), so
+        // don't release on lift; only the plain momentary hold releases here.
+        if (!config->drag_lock) {
+            input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+        }
     } else if (scroll) {
         // TODO: Expose this divisor.
         int16_t scroll_div = 32;
@@ -552,13 +538,12 @@ static int iqs5xx_init(const struct device *dev) {
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
-        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 50),                     \
+        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 20),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \
         .press_and_hold_time = DT_INST_PROP_OR(n, press_and_hold_time, 250),                       \
-        .drag_requires_double_tap = DT_INST_PROP(n, drag_requires_double_tap),                     \
-        .double_tap_time = DT_INST_PROP_OR(n, double_tap_time, 275),                               \
+        .drag_lock = DT_INST_PROP(n, drag_lock),                                                   \
         .switch_xy = DT_INST_PROP(n, switch_xy),                                                   \
         .flip_x = DT_INST_PROP(n, flip_x),                                                         \
         .flip_y = DT_INST_PROP(n, flip_y),                                                         \

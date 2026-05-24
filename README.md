@@ -19,13 +19,15 @@
 >   momentary hold (releases on lift). Starting a drag from a *press-and-hold*
 >   rather than a tap means no stray first click — so dragging a multi-file
 >   selection doesn't deselect it and doesn't double-click-open files.
-> - **Two-finger zoom (pinch/expand) — experimental.** New `zoom` (+
->   `zoom-initial-distance`) property. The chip's zoom gesture is emitted as KEY
->   clicks on spare button codes (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`),
->   which a central `zmk,input-processor-behaviors` maps to Ctrl+scroll (see
->   Usage). Zoom competes with two-finger scroll and only fires once the pinch
->   exceeds `zoom-initial-distance`, so expect to tune that per module — and on
->   some units the chip may not raise it at all. Treat as experimental.
+> - **Two-finger zoom (pinch/expand) — implemented but off by default.** New
+>   `zoom` (+ `zoom-initial-distance`) property. When enabled, the chip's zoom
+>   gesture is emitted as KEY clicks on spare button codes (spread →
+>   `INPUT_BTN_4`, pinch → `INPUT_BTN_5`), which a central
+>   `zmk,input-processor-behaviors` maps to Ctrl+scroll (see Usage). In practice
+>   it does **not** trigger reliably on small pads (e.g. the 43 mm TPS43): the
+>   chip detects two fingers but the separation barely changes, so it rarely
+>   raises a usable zoom — and at sensitive thresholds it steals two-finger
+>   scroll. It's left off by default; add `zoom;` to experiment on a larger pad.
 >
 > Not changed: scroll axis is still chosen by the chip's gesture engine based on
 > the two contacts' geometry — the IQS5xx exposes no register to decouple scroll
@@ -57,10 +59,10 @@ Feel free to send a pull request if you test with any of the following models:
   it latches a persistent drag held across finger lifts, released by a tap.
 - Vertical scroll.
 - Horizontal scroll.
-- Two-finger zoom / pinch+expand (fork; **experimental**): emitted as key clicks
-  (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`) for a central Ctrl+scroll
-  mapping. Competes with scroll and gated by `zoom-initial-distance`; may need
-  per-module tuning and may not fire on every unit.
+- Two-finger zoom / pinch+expand (fork; **off by default**): emitted as key
+  clicks (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`) for a central
+  Ctrl+scroll mapping. Doesn't trigger reliably on small pads (the separation
+  barely changes), so it's not enabled; add `zoom;` to try on a larger pad.
 
 ## Usage
 

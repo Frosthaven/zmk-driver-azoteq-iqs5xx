@@ -126,21 +126,36 @@ static void iqs5xx_work_handler(struct k_work *work) {
         data->scroll_y_acc = 0;
     }
 
+    bool zoom = (gesture_events_1 & IQS5XX_ZOOM) != 0;
+    if (!zoom) {
+        data->zoom_acc = 0;
+    }
+
     uint16_t button_code;
     bool button_pressed = false;
     if (gesture_events_0 & IQS5XX_SINGLE_TAP) {
         button_pressed = true;
         button_code = INPUT_BTN_0;
+        // Remember the tap so a following press-and-hold can be treated as a
+        // double-tap-and-drag (see drag_requires_double_tap).
+        data->last_tap_time = k_uptime_get();
     } else if (gesture_events_1 & IQS5XX_TWO_FINGER_TAP) {
         button_pressed = true;
         button_code = INPUT_BTN_1;
     }
 
-    bool hold_became_active = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) && !data->active_hold;
-    bool hold_released = !(gesture_events_0 & IQS5XX_PRESS_AND_HOLD) && data->active_hold;
+    bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
+    // Optionally require the hold to follow a recent tap (double-tap-and-drag).
+    bool hold_qualifies = hold_gesture;
+    if (config->drag_requires_double_tap) {
+        hold_qualifies =
+            hold_gesture && (k_uptime_get() - data->last_tap_time) <= config->double_tap_time;
+    }
+    bool hold_became_active = hold_qualifies && !data->active_hold;
+    bool hold_released = !hold_gesture && data->active_hold;
 
     int16_t rel_x, rel_y;
-    if (tp_movement || scroll) {
+    if (tp_movement || scroll || zoom) {
         ret = iqs5xx_read_reg16(dev, IQS5XX_REL_X, (uint16_t *)&rel_x);
         if (ret < 0) {
             LOG_ERR("Failed to read relative X: %d", ret);
@@ -208,6 +223,24 @@ static void iqs5xx_work_handler(struct k_work *work) {
 
             goto end_comm;
         }
+    } else if (zoom) {
+        // The zoom magnitude (change in distance between the two contacts) is
+        // reported in the relative X register during a zoom gesture. Emit the
+        // two directions on DISTINCT relative codes (not the scroll wheel, and
+        // not via sign) because zmk,input-processor-behaviors keys on the event
+        // code, not its value sign. The host maps each code to a Ctrl+scroll
+        // behavior. INPUT_REL_MISC = expand/zoom in, INPUT_REL_DIAL =
+        // pinch/zoom out (swap on the host if reversed). zoom_div is a coarse
+        // sensitivity divisor.
+        int16_t zoom_div = 4;
+        data->zoom_acc += rel_x;
+        if (abs(data->zoom_acc) >= zoom_div) {
+            int16_t ticks = data->zoom_acc / zoom_div;
+            uint16_t code = (ticks > 0) ? INPUT_REL_MISC : INPUT_REL_DIAL;
+            input_report_rel(dev, code, ticks, true, K_FOREVER);
+            data->zoom_acc %= zoom_div;
+        }
+        goto end_comm;
     } else if (tp_movement) {
         ret = iqs5xx_read_reg8(dev, IQS5XX_NUM_FINGERS, &num_fingers);
         if (ret < 0) {
@@ -290,6 +323,7 @@ static int iqs5xx_setup_device(const struct device *dev) {
     uint8_t two_finger_gestures = 0;
     two_finger_gestures |= config->two_finger_tap ? IQS5XX_TWO_FINGER_TAP : 0;
     two_finger_gestures |= config->scroll ? IQS5XX_SCROLL : 0;
+    two_finger_gestures |= config->zoom ? IQS5XX_ZOOM : 0;
     // Configure multi finger gestures.
     ret = iqs5xx_write_reg8(dev, IQS5XX_MULTI_FINGER_GESTURES_CONF, two_finger_gestures);
     if (ret < 0) {
@@ -410,10 +444,13 @@ static int iqs5xx_init(const struct device *dev) {
         .one_finger_tap = DT_INST_PROP(n, one_finger_tap),                                         \
         .press_and_hold = DT_INST_PROP(n, press_and_hold),                                         \
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
+        .zoom = DT_INST_PROP(n, zoom),                                                             \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \
         .press_and_hold_time = DT_INST_PROP_OR(n, press_and_hold_time, 250),                       \
+        .drag_requires_double_tap = DT_INST_PROP(n, drag_requires_double_tap),                     \
+        .double_tap_time = DT_INST_PROP_OR(n, double_tap_time, 300),                               \
         .switch_xy = DT_INST_PROP(n, switch_xy),                                                   \
         .flip_x = DT_INST_PROP(n, flip_x),                                                         \
         .flip_y = DT_INST_PROP(n, flip_y),                                                         \

@@ -23,7 +23,27 @@ properties:
   two-finger-tap:
     type: boolean
     description: "Register two finger tap gestures and report them as a right click"
-  
+
+  zoom:
+    type: boolean
+    description: |
+      Register two-finger zoom (pinch/expand) gestures and report the signed
+      magnitude on the INPUT_REL_MISC relative code (positive = expand/zoom in,
+      negative = pinch/zoom out). Map it to Ctrl+scroll on the host with a
+      zmk,input-processor-behaviors processor.
+
+  drag-requires-double-tap:
+    type: boolean
+    description: |
+      When set, a press-and-hold only latches a drag (held left button) if it
+      begins within 'double-tap-time' ms of a single tap (macOS-style
+      double-tap-and-drag). A bare press-and-hold then just moves the cursor.
+
+  double-tap-time:
+    type: int
+    description: "Max ms between the tap and the following hold for drag-requires-double-tap."
+    default: 300
+
   scroll:
     type: boolean
     description: "Register and report scroll gestures, both vertical and horizontal scroll is supported"

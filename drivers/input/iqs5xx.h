@@ -120,7 +120,12 @@ struct iqs5xx_config {
     bool one_finger_tap;
     bool press_and_hold;
     bool two_finger_tap;
+    bool zoom;
     uint16_t press_and_hold_time;
+    // When set, a press-and-hold only latches a drag if it follows a single
+    // tap within double_tap_time ms (macOS-style double-tap-and-drag).
+    bool drag_requires_double_tap;
+    uint16_t double_tap_time;
 
     // Scrolling configuration.
     bool scroll;
@@ -150,4 +155,8 @@ struct iqs5xx_data {
     // Scroll accumulators.
     int16_t scroll_x_acc;
     int16_t scroll_y_acc;
+    // Zoom accumulator (signed: +/- = expand/pinch).
+    int16_t zoom_acc;
+    // Uptime (ms) of the last single tap, for double-tap-and-hold drag.
+    int64_t last_tap_time;
 };

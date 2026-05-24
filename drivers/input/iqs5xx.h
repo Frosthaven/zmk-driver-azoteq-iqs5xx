@@ -188,4 +188,5 @@ struct iqs5xx_data {
     uint8_t touch_max_fingers;
     int64_t touch_start_time;
     int32_t touch_move_acc;
+    bool touch_gestured; // touch triggered scroll/zoom -> not a tap
 };

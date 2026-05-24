@@ -192,6 +192,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
             data->touch_start_time = k_uptime_get();
             data->touch_max_fingers = num_fingers;
             data->touch_move_acc = 0;
+            data->touch_gestured = false;
         } else if (num_fingers > data->touch_max_fingers) {
             data->touch_max_fingers = num_fingers;
         }
@@ -199,6 +200,11 @@ static void iqs5xx_work_handler(struct k_work *work) {
         // -- e.g. a quick two-finger scroll flick -- isn't mistaken for a tap.
         if (tp_movement || scroll || zoom) {
             data->touch_move_acc += abs(rel_x) + abs(rel_y);
+        }
+        // A touch that ever scrolled or zoomed is a gesture, never a tap -- so a
+        // fast pinch can't be misread as a two-finger tap (right click) on lift.
+        if (scroll || zoom) {
+            data->touch_gestured = true;
         }
     } else if (data->prev_num_fingers > 0) {
         // All fingers lifted -- classify the just-ended touch and act on it.
@@ -220,10 +226,11 @@ static void iqs5xx_work_handler(struct k_work *work) {
                     iqs5xx_emit_click(dev, data, MIDDLE_BUTTON_CODE);
                 }
             }
-        } else if (quick && low_move) {
+        } else if (quick && low_move && !data->touch_gestured) {
             // Synthesized tap-click, chosen by PEAK finger count: a staggered
             // multi-finger landing resolves correctly, and a single finger
-            // touching down first can't sneak in an early left click.
+            // touching down first can't sneak in an early left click. A touch
+            // that scrolled/zoomed is excluded, so a fast pinch isn't a tap.
             if (peak == 1 && config->one_finger_tap) {
                 iqs5xx_emit_click(dev, data, LEFT_BUTTON_CODE);
             } else if (peak == 2 && config->two_finger_tap) {

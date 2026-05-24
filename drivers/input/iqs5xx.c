@@ -78,6 +78,8 @@ static void iqs5xx_button_release_work_handler(struct k_work *work) {
     }
 }
 
+static int iqs5xx_setup_device(const struct device *dev);
+
 // Emit a synthetic mouse-button click: press now, auto-release shortly after.
 static void iqs5xx_emit_click(const struct device *dev, struct iqs5xx_data *data, uint16_t code) {
     k_work_cancel_delayable(&data->button_release_work);
@@ -118,12 +120,17 @@ static void iqs5xx_work_handler(struct k_work *work) {
         goto end_comm;
     }
 
-    // Handle reset indication.
+    // Handle reset indication. The chip reloads its FACTORY defaults on reset
+    // (e.g. from a power glitch, ESD, or its watchdog), which have a different
+    // axis orientation and gesture configuration than we programmed. So
+    // re-apply our full configuration here rather than only acknowledging the
+    // reset -- otherwise the trackpad silently misbehaves (notably a
+    // 90-degree-rotated cursor when switch-xy reverts) until the half reboots.
     if (sys_info_0 & IQS5XX_SHOW_RESET) {
-        LOG_INF("Device reset detected");
-        // Acknowledge reset.
+        LOG_WRN("Device reset detected; re-applying configuration");
         iqs5xx_write_reg8(dev, IQS5XX_SYSTEM_CONTROL_0, IQS5XX_ACK_RESET);
-        goto end_comm;
+        iqs5xx_setup_device(dev);
+        return; // setup_device closes the comm window
     }
 
     if (iqs5xx_read_reg8(dev, IQS5XX_NUM_FINGERS, &num_fingers) < 0) {

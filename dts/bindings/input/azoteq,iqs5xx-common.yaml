@@ -42,10 +42,11 @@ properties:
   zoom-initial-distance:
     type: int
     description: |
-      Minimum change (in sensor units) in the two contacts' separation before a
-      zoom gesture fires. The chip default can be too large to ever trigger;
-      smaller = more sensitive.
-    default: 25
+      Change (in sensor pixels) in the two contacts' separation needed to
+      trigger a zoom, and also used for the per-event consecutive distance. The
+      chip defaults are large enough that zoom can feel dead; smaller = more
+      sensitive and more continuous.
+    default: 5
 
   drag-requires-double-tap:
     type: boolean
@@ -58,9 +59,8 @@ properties:
     type: int
     description: |
       Max ms gap between the single tap and the second touch landing for
-      drag-requires-double-tap. The driver adds press-and-hold-time internally
-      (the chip only raises the hold after that delay), so the effective
-      tap->drag window is double-tap-time + press-and-hold-time.
+      drag-requires-double-tap. The touch latches the drag-lock immediately on
+      contact (no hold-time wait); the lock is then ended by a tap.
     default: 400
 
   scroll:

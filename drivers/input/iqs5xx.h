@@ -108,9 +108,11 @@
 #define IQS5XX_SCROLL BIT(1)
 #define IQS5XX_ZOOM BIT(2)
 
-// Two-finger zoom config: minimum change in contact separation to trigger a
-// zoom gesture. The chip default can be too large to ever fire.
-#define IQS5XX_ZOOM_INITIAL_DISTANCE 0x06CB // 2 bytes.
+// Two-finger zoom config (datasheet 6.6): Initial Distance is the separation
+// change needed to first trigger a zoom; Consecutive Distance is the change per
+// subsequent zoom event. Both default high enough that zoom can feel dead.
+#define IQS5XX_ZOOM_INITIAL_DISTANCE 0x06CB     // 2 bytes.
+#define IQS5XX_ZOOM_CONSECUTIVE_DISTANCE 0x06CD // 2 bytes.
 
 // Axes configuration.
 #define IQS5XX_XY_CONFIG_0 0x0669
@@ -171,7 +173,9 @@ struct iqs5xx_data {
     // Immediate (no chip-timer) double-tap-drag state.
     bool manual_drag;
     uint8_t prev_num_fingers;
-    // Touch-sequence tracking for the synthesized three-finger middle-click.
+    // Touch-sequence tracking for synthesized multi-finger taps and for
+    // suppressing leftover-finger cursor motion after a scroll/zoom.
     uint8_t touch_max_fingers;
     int64_t touch_start_time;
+    int32_t touch_move_acc;
 };

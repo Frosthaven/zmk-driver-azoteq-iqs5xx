@@ -147,17 +147,14 @@ static void iqs5xx_work_handler(struct k_work *work) {
         data->zoom_acc = 0;
     }
 
-    uint16_t button_code;
+    uint16_t button_code = 0;
     bool button_pressed = false;
     if (gesture_events_0 & IQS5XX_SINGLE_TAP) {
         button_pressed = true;
         button_code = INPUT_BTN_0;
-        // Remember the tap so a following press-and-hold can be treated as a
-        // double-tap-and-drag (see drag_requires_double_tap).
+        // Remember the tap so a following touch can latch a double-tap-drag
+        // (see drag_requires_double_tap).
         data->last_tap_time = k_uptime_get();
-    } else if (gesture_events_1 & IQS5XX_TWO_FINGER_TAP) {
-        button_pressed = true;
-        button_code = INPUT_BTN_1;
     }
 
     bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
@@ -183,42 +180,61 @@ static void iqs5xx_work_handler(struct k_work *work) {
         }
     }
 
-    // Three-finger tap -> middle click. The chip has no native 3-finger
-    // gesture, so track the peak finger count of the current touch and, when
-    // all fingers lift quickly with a peak of exactly 3, emit a middle click.
+    // Track the active touch (start time, peak finger count, total movement) so
+    // a "tap" -- quick and low-movement -- can be told from a drag/scroll on
+    // lift. Multi-finger taps are classified here by PEAK finger count, so a
+    // staggered 2-/3-finger landing still resolves correctly (the chip's native
+    // two-finger tap, which would fire early, is left disabled). The chip has no
+    // 3-finger gesture at all, so middle-click is synthesized the same way.
     if (num_fingers > 0) {
         if (data->prev_num_fingers == 0) {
             data->touch_start_time = k_uptime_get();
             data->touch_max_fingers = num_fingers;
+            data->touch_move_acc = 0;
         } else if (num_fingers > data->touch_max_fingers) {
             data->touch_max_fingers = num_fingers;
         }
+        // Count any reported motion (cursor, scroll, or zoom) so a moving touch
+        // -- e.g. a quick two-finger scroll flick -- isn't mistaken for a tap.
+        if (tp_movement || scroll || zoom) {
+            data->touch_move_acc += abs(rel_x) + abs(rel_y);
+        }
     } else if (data->prev_num_fingers > 0) {
-        if (config->three_finger_tap && data->touch_max_fingers == 3 && !data->manual_drag &&
-            (k_uptime_get() - data->touch_start_time) <= 250) {
-            k_work_cancel_delayable(&data->button_release_work);
-            input_report_key(dev, MIDDLE_BUTTON_CODE, 1, true, K_FOREVER);
-            data->buttons_pressed |= BIT(MIDDLE_BUTTON_CODE - INPUT_BTN_0);
-            k_work_schedule(&data->button_release_work, K_MSEC(100));
+        // All fingers lifted -- classify the just-ended touch.
+        bool was_tap = (k_uptime_get() - data->touch_start_time) <= 200 &&
+                       data->touch_move_acc <= 40;
+        if (was_tap) {
+            uint16_t tap_btn = 0;
+            if (data->touch_max_fingers == 2 && config->two_finger_tap) {
+                tap_btn = RIGHT_BUTTON_CODE;
+            } else if (data->touch_max_fingers == 3 && config->three_finger_tap) {
+                tap_btn = MIDDLE_BUTTON_CODE;
+            }
+            // Any tap ends a held drag-lock; a 2-/3-finger tap also ends it AND
+            // issues its click. A 1-finger end tap is consumed (no extra click).
+            if (data->manual_drag) {
+                input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+                data->manual_drag = false;
+                data->last_tap_time = 0;
+                button_pressed = false;
+            }
+            if (tap_btn != 0) {
+                k_work_cancel_delayable(&data->button_release_work);
+                input_report_key(dev, tap_btn, 1, true, K_FOREVER);
+                data->buttons_pressed |= BIT(tap_btn - INPUT_BTN_0);
+                k_work_schedule(&data->button_release_work, K_MSEC(100));
+            }
         }
         data->touch_max_fingers = 0;
     }
 
-    // Double-tap-drag with drag-lock: a tap, then a touch, latches the left
-    // button immediately (no chip hold timer). The button stays held across
-    // finger lifts -- so you can drag in multiple strokes -- and a TAP ends it.
-    if (config->drag_requires_double_tap) {
-        bool single_tap = (gesture_events_0 & IQS5XX_SINGLE_TAP) != 0;
+    // Double-tap-drag: a single tap then a single-finger touch (within
+    // double_tap_time) latches the left button as a drag-LOCK. It stays held
+    // across finger lifts and is ended by a tap, handled on lift above.
+    if (config->drag_requires_double_tap && !data->manual_drag) {
         bool touch_started = (num_fingers == 1) && (data->prev_num_fingers == 0);
-        if (data->manual_drag && single_tap) {
-            // Tap ends the locked drag.
-            input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
-            data->manual_drag = false;
-            button_pressed = false;   // consume the end tap; don't also click
-            data->last_tap_time = 0;  // and don't let it start a new drag
-        } else if (!data->manual_drag && touch_started &&
-                   (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
-            // Latch the drag on the touch that follows a tap.
+        if (touch_started && data->last_tap_time != 0 &&
+            (k_uptime_get() - data->last_tap_time) <= config->double_tap_time) {
             k_work_cancel_delayable(&data->button_release_work);
             data->buttons_pressed &= ~BIT(LEFT_BUTTON_CODE - INPUT_BTN_0);
             input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
@@ -297,7 +313,10 @@ static void iqs5xx_work_handler(struct k_work *work) {
         }
         goto end_comm;
     } else if (tp_movement) {
-        if (rel_x != 0 || rel_y != 0) {
+        // Only move the cursor for a touch that has only ever been a single
+        // finger. After a scroll/zoom, lifting one finger before the other
+        // leaves one contact whose motion would otherwise drag the cursor.
+        if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
             input_report_rel(dev, INPUT_REL_X, rel_x, false, K_FOREVER);
             input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_FOREVER);
         }
@@ -373,7 +392,10 @@ static int iqs5xx_setup_device(const struct device *dev) {
     }
 
     uint8_t two_finger_gestures = 0;
-    two_finger_gestures |= config->two_finger_tap ? IQS5XX_TWO_FINGER_TAP : 0;
+    // The chip's native two-finger-tap is intentionally NOT enabled: two- and
+    // three-finger taps are synthesized from the peak finger count on lift (see
+    // the work handler), so a staggered multi-finger landing can't be
+    // misclassified as a right-click before the later fingers arrive.
     two_finger_gestures |= config->scroll ? IQS5XX_SCROLL : 0;
     two_finger_gestures |= config->zoom ? IQS5XX_ZOOM : 0;
     // Configure multi finger gestures.
@@ -383,13 +405,20 @@ static int iqs5xx_setup_device(const struct device *dev) {
         return ret;
     }
 
-    // The zoom gesture only fires once the two contacts' separation changes by
-    // at least this much; the chip's default can be too large to ever trigger,
-    // so set it explicitly. Smaller = more sensitive.
+    // Zoom fires only once the two contacts' separation changes by at least the
+    // Initial Distance, then emits an event per Consecutive Distance of further
+    // change (datasheet 6.6). Both default high enough that zoom can feel dead,
+    // so set both explicitly -- smaller = more sensitive / more continuous.
     if (config->zoom) {
         ret = iqs5xx_write_reg16(dev, IQS5XX_ZOOM_INITIAL_DISTANCE, config->zoom_initial_distance);
         if (ret < 0) {
             LOG_ERR("Failed to configure zoom initial distance: %d", ret);
+            return ret;
+        }
+        ret = iqs5xx_write_reg16(dev, IQS5XX_ZOOM_CONSECUTIVE_DISTANCE,
+                                 config->zoom_initial_distance);
+        if (ret < 0) {
+            LOG_ERR("Failed to configure zoom consecutive distance: %d", ret);
             return ret;
         }
     }
@@ -509,7 +538,7 @@ static int iqs5xx_init(const struct device *dev) {
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
         .zoom = DT_INST_PROP(n, zoom),                                                             \
-        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 25),                     \
+        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 5),                      \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \

@@ -97,6 +97,12 @@
 #define IQS5XX_TAP_MS_MAX 300
 #define IQS5XX_TAP_MOVE_MAX 50
 
+// A 2-/3-finger touch that moves more than this (summed |rel_x|+|rel_y|) is a
+// scroll/zoom attempt, never a tap -- much tighter than IQS5XX_TAP_MOVE_MAX so a
+// small two-finger scroll the chip hasn't yet flagged as SCROLL can't be misread
+// as a two-finger tap (right click) on lift. Tune empirically.
+#define IQS5XX_MULTI_TAP_MOVE_MAX 15
+
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
 #define RIGHT_BUTTON_BIT BIT(1)

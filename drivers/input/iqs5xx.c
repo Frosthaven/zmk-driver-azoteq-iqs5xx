@@ -206,6 +206,13 @@ static void iqs5xx_work_handler(struct k_work *work) {
         if (scroll || zoom) {
             data->touch_gestured = true;
         }
+        // A multi-finger touch that moves at all is a scroll/zoom attempt, not a
+        // right-/middle-click tap -- mark it gestured before the chip commits to
+        // its own SCROLL flag, so a short two-finger scroll the chip hasn't
+        // classified yet can't be misread as a two-finger tap (right click) on lift.
+        if (data->touch_max_fingers >= 2 && data->touch_move_acc > IQS5XX_MULTI_TAP_MOVE_MAX) {
+            data->touch_gestured = true;
+        }
     } else if (data->prev_num_fingers > 0) {
         // All fingers lifted -- classify the just-ended touch and act on it.
         bool low_move = data->touch_move_acc <= IQS5XX_TAP_MOVE_MAX;

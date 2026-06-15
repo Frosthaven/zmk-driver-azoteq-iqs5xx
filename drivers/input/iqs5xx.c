@@ -13,6 +13,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
 
 #include "iqs5xx.h"
 
@@ -540,6 +541,43 @@ static int iqs5xx_init(const struct device *dev) {
     return 0;
 }
 
+#ifdef CONFIG_PM_DEVICE
+/* Zephyr PM device action: when ZMK_SLEEP wakes the SoC from System OFF, ZMK
+ * issues PM_DEVICE_ACTION_RESUME to every PM-aware device. We re-apply the chip
+ * configuration (orientation, gestures, scroll, etc.) and re-arm the RDY GPIO
+ * interrupt -- System OFF disables GPIO IRQs, and without this re-arm the work
+ * handler would never fire again and the cursor stays dead until a power-cycle.
+ * The chip itself stays powered through sleep (permanent 3v3 rail), but we
+ * re-init defensively in case it was reset by ESD/glitch during the sleep
+ * window (same path the driver already uses for runtime reset detection). */
+static int iqs5xx_pm_action(const struct device *dev, enum pm_device_action action) {
+    const struct iqs5xx_config *config = dev->config;
+    int ret;
+
+    switch (action) {
+    case PM_DEVICE_ACTION_RESUME:
+        ret = iqs5xx_setup_device(dev);
+        if (ret < 0) {
+            LOG_ERR("PM resume: chip setup failed (%d)", ret);
+            return ret;
+        }
+        ret = gpio_pin_interrupt_configure_dt(&config->rdy_gpio, GPIO_INT_EDGE_RISING);
+        if (ret < 0) {
+            LOG_ERR("PM resume: RDY irq re-arm failed (%d)", ret);
+            return ret;
+        }
+        return 0;
+    case PM_DEVICE_ACTION_SUSPEND:
+        /* Quiet the RDY edge-detect so spurious wakes don't queue work during
+         * suspend; harmless if it fails. */
+        (void)gpio_pin_interrupt_configure_dt(&config->rdy_gpio, GPIO_INT_DISABLE);
+        return 0;
+    default:
+        return -ENOTSUP;
+    }
+}
+#endif /* CONFIG_PM_DEVICE */
+
 // Replace CONFIG_INPUT_INIT_PRIORITY with the azoteq specific value.
 #define IQS5XX_INIT(n)                                                                             \
     static struct iqs5xx_data iqs5xx_data_##n;                                                     \
@@ -564,7 +602,9 @@ static int iqs5xx_init(const struct device *dev) {
         .bottom_beta = DT_INST_PROP_OR(n, bottom_beta, 5),                                         \
         .stationary_threshold = DT_INST_PROP_OR(n, stationary_threshold, 5),                       \
     };                                                                                             \
-    DEVICE_DT_INST_DEFINE(n, iqs5xx_init, NULL, &iqs5xx_data_##n, &iqs5xx_config_##n, POST_KERNEL, \
+    PM_DEVICE_DT_INST_DEFINE(n, iqs5xx_pm_action);                                                 \
+    DEVICE_DT_INST_DEFINE(n, iqs5xx_init, PM_DEVICE_DT_INST_GET(n),                                \
+                          &iqs5xx_data_##n, &iqs5xx_config_##n, POST_KERNEL,                       \
                           CONFIG_INPUT_INIT_PRIORITY, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS5XX_INIT)

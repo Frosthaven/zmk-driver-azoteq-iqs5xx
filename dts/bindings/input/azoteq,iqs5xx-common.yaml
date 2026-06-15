@@ -94,3 +94,13 @@ properties:
     description: |
       How far a finger must move (in pixels) to not be considered stationary.
     default: 5
+
+  cursor-scale-percent:
+    type: int
+    description: |
+      Scale applied to the cursor's reported REL_X / REL_Y deltas, as a
+      percentage of the chip's raw value. Default 100 = no scaling. Set lower to
+      slow the cursor in firmware (e.g. 75 = 25% slower), so the feel is
+      consistent across host machines without OS pointer tweaks. Does not
+      affect scroll or zoom (those have their own divisors).
+    default: 100

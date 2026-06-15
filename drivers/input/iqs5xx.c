@@ -332,8 +332,18 @@ static void iqs5xx_work_handler(struct k_work *work) {
         // finger. After a scroll/zoom, lifting one finger before the other
         // leaves one contact whose motion would otherwise drag the cursor.
         if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
-            input_report_rel(dev, INPUT_REL_X, rel_x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, rel_y, true, K_FOREVER);
+            // Apply cursor-scale (DT prop; default 100 = no scaling). Lets a
+            // user slow the cursor in firmware so the feel matches across hosts
+            // without per-OS pointer tweaks. Local copies so scroll/zoom (which
+            // already have their own divisors) see the chip's original deltas.
+            int16_t out_x = rel_x;
+            int16_t out_y = rel_y;
+            if (config->cursor_scale_percent != 100) {
+                out_x = (int16_t)((int32_t)rel_x * config->cursor_scale_percent / 100);
+                out_y = (int16_t)((int32_t)rel_y * config->cursor_scale_percent / 100);
+            }
+            input_report_rel(dev, INPUT_REL_X, out_x, false, K_FOREVER);
+            input_report_rel(dev, INPUT_REL_Y, out_y, true, K_FOREVER);
         }
     }
 
@@ -601,6 +611,7 @@ static int iqs5xx_pm_action(const struct device *dev, enum pm_device_action acti
         .flip_y = DT_INST_PROP(n, flip_y),                                                         \
         .bottom_beta = DT_INST_PROP_OR(n, bottom_beta, 5),                                         \
         .stationary_threshold = DT_INST_PROP_OR(n, stationary_threshold, 5),                       \
+        .cursor_scale_percent = DT_INST_PROP_OR(n, cursor_scale_percent, 100),                     \
     };                                                                                             \
     PM_DEVICE_DT_INST_DEFINE(n, iqs5xx_pm_action);                                                 \
     DEVICE_DT_INST_DEFINE(n, iqs5xx_init, PM_DEVICE_DT_INST_GET(n),                                \

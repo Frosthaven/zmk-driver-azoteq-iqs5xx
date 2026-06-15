@@ -169,6 +169,9 @@ struct iqs5xx_config {
     // Sensitivity. configuration.
     uint8_t bottom_beta;
     uint8_t stationary_threshold;
+
+    // Cursor velocity scale as a percentage of the chip's REL_X/Y. 100 = no scaling.
+    uint8_t cursor_scale_percent;
 };
 
 struct iqs5xx_data {

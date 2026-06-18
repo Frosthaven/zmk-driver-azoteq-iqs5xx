@@ -7,9 +7,8 @@
 > - **Three-finger tap** for middle click.
 > - **Tap-then-drag** for drag and drop: tap, then touch and drag. You will
 >   stay in dragging mode until you tap again to release.
-> - **Cursor tuned to feel like an Apple trackpad** (about half the chip's
->   default speed, with scroll slowed proportionally and slow precision
->   movement preserved).
+> - **Cursor speed tuned to resemble an Apple trackpad**, with scrolling
+>   receiving a wider scroll speed range based on gesture input.
 
 ## Compatibility
 

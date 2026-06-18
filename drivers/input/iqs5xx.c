@@ -268,7 +268,17 @@ static void iqs5xx_work_handler(struct k_work *work) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
                 data->tap_then_hold_engaged = false;
-                data->last_tap_lift_time = 0;
+                // A 1-finger stationary drag-release ALSO arms tap-then-hold
+                // so the user can chain rubber-band -> release -> touch+move
+                // = drag the selection. Without arming, the only way to start
+                // a fresh drag would be tap (clicks + deselects) -> touch+move.
+                // Multi-finger drag-releases emit a right/middle click and
+                // skip arming -- those are escape gestures, not drag preludes.
+                if (config->tap_then_hold && config->drag_lock && low_move && peak == 1) {
+                    data->last_tap_lift_time = k_uptime_get();
+                } else {
+                    data->last_tap_lift_time = 0;
+                }
                 if (low_move && peak == 2 && config->two_finger_tap) {
                     iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
                 } else if (low_move && peak == 3 && config->three_finger_tap) {

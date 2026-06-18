@@ -223,6 +223,13 @@ struct iqs5xx_data {
     // tap (= double-click) can lift before any drag latches. Motion engages;
     // a clean lift falls through to the normal tap path (second click).
     bool tap_then_hold_pending;
+    // Set when the prior tap's auto-release has been cancelled to mask its
+    // click while a tap-then-hold engage is pending: if motion engages, we
+    // take ownership of the still-held LEFT (no discrete click visible to
+    // the host -- the tap "disappears" into the drag, matching the old
+    // immediate-engage feel). On clear-without-engage we emit the release
+    // here. emit_click clears the flag when it release-firsts the same bit.
+    bool tap_release_deferred;
     // Per-axis fractional remainder for the cursor-scale-percent scaling.
     // The scale is integer math (rel * pct / 100), so any chip delta below
     // 100/pct rounds to 0 and slow precision motion is lost. Holding the

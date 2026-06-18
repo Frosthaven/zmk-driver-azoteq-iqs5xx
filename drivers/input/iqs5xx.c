@@ -82,10 +82,13 @@ static void iqs5xx_button_release_work_handler(struct k_work *work) {
 static int iqs5xx_setup_device(const struct device *dev);
 
 // Emit a synthetic mouse-button click: press now, auto-release shortly after.
-// If the same button is already pressed (its 100ms auto-release hasn't fired
-// yet), release it first so the host sees a fresh click rather than one long
-// press -- otherwise two fast taps inside the release window collapse into a
-// single click and double-tap is lost.
+// If the same button is already pressed (its auto-release hasn't fired yet),
+// release it first so the host sees a fresh click rather than one long press
+// -- otherwise two fast taps inside the release window collapse into a single
+// click and double-tap is lost.
+// Auto-release time matches IQS5XX_TAP_HOLD_WINDOW_MS so masking works across
+// the full tap-then-hold window: the prior tap's release is still scheduled
+// when the second touch lands and pending-setup cancels it.
 static void iqs5xx_emit_click(const struct device *dev, struct iqs5xx_data *data, uint16_t code) {
     uint8_t bit = BIT(code - INPUT_BTN_0);
     k_work_cancel_delayable(&data->button_release_work);
@@ -93,9 +96,12 @@ static void iqs5xx_emit_click(const struct device *dev, struct iqs5xx_data *data
         input_report_key(dev, code, 0, true, K_FOREVER);
         data->buttons_pressed &= ~bit;
     }
+    // The release we're about to schedule supersedes any deferred-release
+    // bookkeeping -- the pending block must not double-release this bit.
+    data->tap_release_deferred = false;
     input_report_key(dev, code, 1, true, K_FOREVER);
     data->buttons_pressed |= bit;
-    k_work_schedule(&data->button_release_work, K_MSEC(100));
+    k_work_schedule(&data->button_release_work, K_MSEC(IQS5XX_TAP_HOLD_WINDOW_MS));
 }
 
 static void iqs5xx_work_handler(struct k_work *work) {
@@ -219,6 +225,18 @@ static void iqs5xx_work_handler(struct k_work *work) {
                 !data->manual_drag && data->last_tap_lift_time > 0 &&
                 (k_uptime_get() - data->last_tap_lift_time) <= IQS5XX_TAP_HOLD_WINDOW_MS) {
                 data->tap_then_hold_pending = true;
+                // Mask the prior tap's click: cancel its pending auto-release
+                // so the host's LEFT stays held while we wait for motion vs.
+                // a clean lift. If motion engages, we take ownership of the
+                // still-held press (no discrete click event ever reaches the
+                // host -- the drag absorbs the tap, restoring the old
+                // immediate-engage feel that preserved selections). If the
+                // touch instead lifts as a tap (double-click), emit_click's
+                // release-first handles releasing the masked press cleanly.
+                if (data->buttons_pressed & LEFT_BUTTON_BIT) {
+                    k_work_cancel_delayable(&data->button_release_work);
+                    data->tap_release_deferred = true;
+                }
             }
             // Always consume the armed tap on touch-down -- whether engaged
             // or not, the chance closes here.
@@ -268,17 +286,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
                 data->tap_then_hold_engaged = false;
-                // A 1-finger stationary drag-release ALSO arms tap-then-hold
-                // so the user can chain rubber-band -> release -> touch+move
-                // = drag the selection. Without arming, the only way to start
-                // a fresh drag would be tap (clicks + deselects) -> touch+move.
-                // Multi-finger drag-releases emit a right/middle click and
-                // skip arming -- those are escape gestures, not drag preludes.
-                if (config->tap_then_hold && config->drag_lock && low_move && peak == 1) {
-                    data->last_tap_lift_time = k_uptime_get();
-                } else {
-                    data->last_tap_lift_time = 0;
-                }
+                data->last_tap_lift_time = 0;
                 if (low_move && peak == 2 && config->two_finger_tap) {
                     iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
                 } else if (low_move && peak == 3 && config->three_finger_tap) {
@@ -315,14 +323,25 @@ static void iqs5xx_work_handler(struct k_work *work) {
     // before motion clears the pending state without engaging.
     if (data->tap_then_hold_pending) {
         if (num_fingers != 1) {
+            // Lift or multi-finger: pending resolves without engagement.
+            // If the prior tap's release was deferred (we held LEFT to mask
+            // the click), emit it now -- unless the lift handler already
+            // ran emit_click for this lift, which would have cleared the
+            // flag while taking over the press.
+            if (data->tap_release_deferred && (data->buttons_pressed & LEFT_BUTTON_BIT)) {
+                input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+                data->buttons_pressed &= ~LEFT_BUTTON_BIT;
+            }
+            data->tap_release_deferred = false;
             data->tap_then_hold_pending = false;
         } else if (tp_movement) {
-            // The tap's auto-release may still be pending (100ms scheduled
-            // by emit_click). If we leave it scheduled, it would fire
-            // mid-drag and release the host's LEFT button. Cancel it; if
-            // the bit is still set the host already sees LEFT held from
-            // the tap, so just keep it held -- no second press needed.
-            k_work_cancel_delayable(&data->button_release_work);
+            // Motion: engage. If LEFT is already held (the masked tap press),
+            // take ownership without re-pressing -- the host saw one
+            // continuous LEFT down from the tap through the drag, no click
+            // event in between. If the bit is clear (tap released before the
+            // second touch -- happens when emit_click's auto-release window
+            // is shorter than the engage window in a corner case), press
+            // fresh.
             if (data->buttons_pressed & LEFT_BUTTON_BIT) {
                 data->buttons_pressed &= ~LEFT_BUTTON_BIT;
             } else {
@@ -330,6 +349,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
             }
             data->manual_drag = true;
             data->tap_then_hold_engaged = true;
+            data->tap_release_deferred = false;
             data->tap_then_hold_pending = false;
         }
         // else: single finger, no motion yet -- keep pending and wait.
@@ -424,12 +444,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
         // Only move the cursor for a touch that has only ever been a single
         // finger. After a scroll/zoom, lifting one finger before the other
         // leaves one contact whose motion would otherwise drag the cursor.
-        // Also skip while a tap-then-hold engage is still pending -- the
-        // pending block above engages on the first motion, so emitting that
-        // first delta as plain cursor motion (before the engage) would leave
-        // the host's cursor moving without the drag's LEFT button held.
-        if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1 &&
-            !data->tap_then_hold_pending) {
+        if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
             // Apply cursor-scale (DT prop; default 100 = no scaling). Lets a
             // user slow the cursor in firmware so the feel matches across hosts
             // without per-OS pointer tweaks.

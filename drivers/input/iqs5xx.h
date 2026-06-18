@@ -107,7 +107,7 @@
 // the next finger-down that arms drag-lock. Tighter than the chip's
 // press-and-hold time so it feels like a deliberate double-touch, not a
 // chance re-tap.
-#define IQS5XX_TAP_HOLD_WINDOW_MS 250
+#define IQS5XX_TAP_HOLD_WINDOW_MS 175
 
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
@@ -218,4 +218,13 @@ struct iqs5xx_data {
     // *this* touch can release the just-engaged lock (the user wanted to
     // scroll, not drag) without disturbing a lock engaged on a prior touch.
     bool tap_then_hold_engaged;
+    // Per-axis fractional remainder for the cursor-scale-percent scaling.
+    // The scale is integer math (rel * pct / 100), so any chip delta below
+    // 100/pct rounds to 0 and slow precision motion is lost. Holding the
+    // remainder here lets sub-unit motion accumulate across cycles until it
+    // crosses ±1 -- the cursor feels half-speed without a dead zone at low
+    // speeds. Reset on touch-down so a fresh touch can't inherit lingering
+    // motion from a prior one.
+    int16_t cursor_rem_x;
+    int16_t cursor_rem_y;
 };

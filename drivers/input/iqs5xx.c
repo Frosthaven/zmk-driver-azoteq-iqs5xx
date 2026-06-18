@@ -195,6 +195,8 @@ static void iqs5xx_work_handler(struct k_work *work) {
             data->touch_move_acc = 0;
             data->touch_gestured = false;
             data->tap_then_hold_engaged = false;
+            data->cursor_rem_x = 0;
+            data->cursor_rem_y = 0;
             // Tap-then-hold drag-lock: a clean 1-finger tap recently armed
             // last_tap_lift_time; if this touch lands as a single finger
             // inside the window and a drag isn't already locked, latch the
@@ -327,8 +329,16 @@ static void iqs5xx_work_handler(struct k_work *work) {
             input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
         }
     } else if (scroll) {
-        // TODO: Expose this divisor.
+        // TODO: Expose this base divisor.
         int16_t scroll_div = 32;
+        // Apply cursor-scale-percent to scroll too: a lower scale slows the
+        // wheel by requiring more raw motion per tick. The existing scroll
+        // accumulator absorbs the integer rounding here, so a fractional
+        // remainder isn't needed. scale=50 -> effective_div=64 (twice the
+        // motion per tick); 100 = no slowdown.
+        if (config->cursor_scale_percent > 0 && config->cursor_scale_percent != 100) {
+            scroll_div = (int16_t)((int32_t)scroll_div * 100 / config->cursor_scale_percent);
+        }
 
         // Only one scrolling direction is valid at a time.
         // End the communication right after reporting the movement.
@@ -382,16 +392,27 @@ static void iqs5xx_work_handler(struct k_work *work) {
         if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
             // Apply cursor-scale (DT prop; default 100 = no scaling). Lets a
             // user slow the cursor in firmware so the feel matches across hosts
-            // without per-OS pointer tweaks. Local copies so scroll/zoom (which
-            // already have their own divisors) see the chip's original deltas.
-            int16_t out_x = rel_x;
-            int16_t out_y = rel_y;
+            // without per-OS pointer tweaks.
+            int16_t out_x, out_y;
             if (config->cursor_scale_percent != 100) {
-                out_x = (int16_t)((int32_t)rel_x * config->cursor_scale_percent / 100);
-                out_y = (int16_t)((int32_t)rel_y * config->cursor_scale_percent / 100);
+                // Fractional accumulator: holding the remainder across cycles
+                // preserves sub-unit motion -- without it, any chip delta of 1
+                // with scale<100 rounds to 0 and the cursor goes dead at low
+                // speeds. The remainder is signed and reset on touch-down.
+                int32_t sx = (int32_t)rel_x * config->cursor_scale_percent + data->cursor_rem_x;
+                int32_t sy = (int32_t)rel_y * config->cursor_scale_percent + data->cursor_rem_y;
+                out_x = (int16_t)(sx / 100);
+                out_y = (int16_t)(sy / 100);
+                data->cursor_rem_x = (int16_t)(sx - (int32_t)out_x * 100);
+                data->cursor_rem_y = (int16_t)(sy - (int32_t)out_y * 100);
+            } else {
+                out_x = rel_x;
+                out_y = rel_y;
             }
-            input_report_rel(dev, INPUT_REL_X, out_x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, out_y, true, K_FOREVER);
+            if (out_x != 0 || out_y != 0) {
+                input_report_rel(dev, INPUT_REL_X, out_x, false, K_FOREVER);
+                input_report_rel(dev, INPUT_REL_Y, out_y, true, K_FOREVER);
+            }
         }
     }
 

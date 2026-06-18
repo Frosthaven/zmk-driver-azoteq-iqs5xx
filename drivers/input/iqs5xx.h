@@ -98,7 +98,7 @@
 #define IQS5XX_TAP_MOVE_MAX 50
 
 // A 2-/3-finger touch that moves more than this (summed |rel_x|+|rel_y|) is a
-// scroll/zoom attempt, never a tap -- much tighter than IQS5XX_TAP_MOVE_MAX so a
+// scroll attempt, never a tap -- much tighter than IQS5XX_TAP_MOVE_MAX so a
 // small two-finger scroll the chip hasn't yet flagged as SCROLL can't be misread
 // as a two-finger tap (right click) on lift. Tune empirically.
 #define IQS5XX_MULTI_TAP_MOVE_MAX 15
@@ -117,12 +117,6 @@
 #define RIGHT_BUTTON_CODE INPUT_BTN_0 + 1
 #define MIDDLE_BUTTON_CODE INPUT_BTN_0 + 2
 
-// Synthetic key codes for the two zoom directions. Emitted as key clicks so the
-// central's zmk,input-processor-behaviors (a key-event processor) maps them to
-// Ctrl+scroll. Spare button codes that don't collide with L/R/M clicks.
-#define ZOOM_IN_CODE (INPUT_BTN_0 + 4)
-#define ZOOM_OUT_CODE (INPUT_BTN_0 + 5)
-
 // These 2 registers have the same bit map.
 // The first one configures the gestures,
 // the second one reports gesture events at runtime.
@@ -131,13 +125,6 @@
 // Multi finger gesture identifiers.
 #define IQS5XX_TWO_FINGER_TAP BIT(0)
 #define IQS5XX_SCROLL BIT(1)
-#define IQS5XX_ZOOM BIT(2)
-
-// Two-finger zoom config (datasheet 6.6): Initial Distance is the separation
-// change needed to first trigger a zoom; Consecutive Distance is the change per
-// subsequent zoom event. Both default high enough that zoom can feel dead.
-#define IQS5XX_ZOOM_INITIAL_DISTANCE 0x06CB     // 2 bytes.
-#define IQS5XX_ZOOM_CONSECUTIVE_DISTANCE 0x06CD // 2 bytes.
 
 // Axes configuration.
 #define IQS5XX_XY_CONFIG_0 0x0669
@@ -155,8 +142,6 @@ struct iqs5xx_config {
     bool press_and_hold;
     bool two_finger_tap;
     bool three_finger_tap;
-    bool zoom;
-    uint16_t zoom_initial_distance;
     uint16_t press_and_hold_time;
     // When set, a press-and-hold latches a persistent drag-LOCK released by a
     // tap (instead of a momentary hold released when the finger lifts).
@@ -198,17 +183,15 @@ struct iqs5xx_data {
     // Scroll accumulators.
     int16_t scroll_x_acc;
     int16_t scroll_y_acc;
-    // Zoom accumulator: summed signed Relative-X during a zoom gesture.
-    int32_t zoom_acc;
     // Press-and-hold drag-lock active (held across finger lifts; ended by a tap).
     bool manual_drag;
     uint8_t prev_num_fingers;
     // Touch-sequence tracking for synthesized multi-finger taps and for
-    // suppressing leftover-finger cursor motion after a scroll/zoom.
+    // suppressing leftover-finger cursor motion after a scroll.
     uint8_t touch_max_fingers;
     int64_t touch_start_time;
     int32_t touch_move_acc;
-    bool touch_gestured; // touch triggered scroll/zoom -> not a tap
+    bool touch_gestured; // touch triggered scroll -> not a tap
     // Time (uptime ms) of the last 1-finger tap lift, used to engage
     // tap-then-hold drag-lock if the next touch-down arrives within
     // IQS5XX_TAP_HOLD_WINDOW_MS. 0 means no armed tap.

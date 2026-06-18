@@ -31,24 +31,6 @@ properties:
       driver from the finger-count register (the chip has no native 3-finger
       gesture); requires the chip's touch events, which the driver enables.
 
-  zoom:
-    type: boolean
-    description: |
-      Register two-finger zoom (pinch/expand) gestures. The signed magnitude is
-      emitted on INPUT_REL_MISC (expand/zoom in) and INPUT_REL_DIAL (pinch/zoom
-      out); map both to Ctrl+scroll on the host with a
-      zmk,input-processor-behaviors processor.
-
-  zoom-initial-distance:
-    type: int
-    description: |
-      Change (in sensor pixels) in the two contacts' separation needed to
-      trigger a zoom, and also used for the per-event consecutive distance.
-      Larger = a bigger deliberate pinch is needed, which keeps ordinary
-      two-finger scrolls from being misread as zoom; smaller = more sensitive
-      but steals scroll.
-    default: 10
-
   drag-lock:
     type: boolean
     description: |
@@ -65,7 +47,7 @@ properties:
       left button (persistent drag-lock, released by a tap). Use this instead
       of the chip's press-and-hold so a drag starts the moment the second
       touch lands, with no hold-time wait. Requires drag-lock. Multi-finger
-      activity (scroll/zoom/multi-tap) within the window cancels engagement.
+      activity (scroll/multi-tap) within the window cancels engagement.
 
   scroll:
     type: boolean
@@ -114,7 +96,6 @@ properties:
       consistent across host machines without OS pointer tweaks. The scroll
       divisor is slowed at HALF this percentage's strength (scroll_scale =
       (100 + cursor-scale-percent) / 2) so the wheel doesn't feel as heavy
-      as the cursor; zoom is not affected. A per-axis fractional accumulator
-      preserves sub-unit motion so slow precision movement isn't lost to
-      integer truncation.
+      as the cursor. A per-axis fractional accumulator preserves sub-unit
+      motion so slow precision movement isn't lost to integer truncation.
     default: 100

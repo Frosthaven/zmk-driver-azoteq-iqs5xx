@@ -173,17 +173,12 @@ static void iqs5xx_work_handler(struct k_work *work) {
         data->scroll_y_acc = 0;
     }
 
-    bool zoom = (gesture_events_1 & IQS5XX_ZOOM) != 0;
-    if (!zoom) {
-        data->zoom_acc = 0;
-    }
-
     bool hold_gesture = (gesture_events_0 & IQS5XX_PRESS_AND_HOLD) != 0;
     bool hold_became_active = hold_gesture && !data->active_hold;
     bool hold_released = !hold_gesture && data->active_hold;
 
     int16_t rel_x, rel_y;
-    if (tp_movement || scroll || zoom) {
+    if (tp_movement || scroll) {
         ret = iqs5xx_read_reg16(dev, IQS5XX_REL_X, (uint16_t *)&rel_x);
         if (ret < 0) {
             LOG_ERR("Failed to read relative X: %d", ret);
@@ -220,7 +215,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
             // reports motion -- a clean quick lift instead falls through
             // to the normal tap path and becomes a second click, so a
             // double-tap doesn't get eaten by drag-lock. Multi-finger
-            // landings skip this so a scroll/zoom intent isn't pending.
+            // landings skip this so a scroll intent isn't pending.
             if (config->tap_then_hold && config->drag_lock && num_fingers == 1 &&
                 !data->manual_drag && data->last_tap_lift_time > 0 &&
                 (k_uptime_get() - data->last_tap_lift_time) <= IQS5XX_TAP_HOLD_WINDOW_MS) {
@@ -244,27 +239,26 @@ static void iqs5xx_work_handler(struct k_work *work) {
         } else if (num_fingers > data->touch_max_fingers) {
             data->touch_max_fingers = num_fingers;
             // A second finger arriving during a tap-then-hold engagement is
-            // the user starting a scroll/zoom (staggered landing) -- release
-            // the just-latched drag-lock so the gesture works cleanly. A
-            // drag-lock engaged on a prior touch (carried across lifts) is
-            // NOT released here, only the in-progress one.
+            // the user starting a scroll (staggered landing) -- release the
+            // just-latched drag-lock so the gesture works cleanly. A drag-
+            // lock engaged on a prior touch (carried across lifts) is NOT
+            // released here, only the in-progress one.
             if (data->tap_then_hold_engaged && data->manual_drag) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
                 data->tap_then_hold_engaged = false;
             }
         }
-        // Count any reported motion (cursor, scroll, or zoom) so a moving touch
-        // -- e.g. a quick two-finger scroll flick -- isn't mistaken for a tap.
-        if (tp_movement || scroll || zoom) {
+        // Count any reported motion (cursor or scroll) so a moving touch --
+        // e.g. a quick two-finger scroll flick -- isn't mistaken for a tap.
+        if (tp_movement || scroll) {
             data->touch_move_acc += abs(rel_x) + abs(rel_y);
         }
-        // A touch that ever scrolled or zoomed is a gesture, never a tap -- so a
-        // fast pinch can't be misread as a two-finger tap (right click) on lift.
-        if (scroll || zoom) {
+        // A touch that ever scrolled is a gesture, never a tap.
+        if (scroll) {
             data->touch_gestured = true;
         }
-        // A multi-finger touch that moves at all is a scroll/zoom attempt, not a
+        // A multi-finger touch that moves at all is a scroll attempt, not a
         // right-/middle-click tap -- mark it gestured before the chip commits to
         // its own SCROLL flag, so a short two-finger scroll the chip hasn't
         // classified yet can't be misread as a two-finger tap (right click) on lift.
@@ -297,7 +291,7 @@ static void iqs5xx_work_handler(struct k_work *work) {
             // Synthesized tap-click, chosen by PEAK finger count: a staggered
             // multi-finger landing resolves correctly, and a single finger
             // touching down first can't sneak in an early left click. A touch
-            // that scrolled/zoomed is excluded, so a fast pinch isn't a tap.
+            // that scrolled is excluded, so a fast flick isn't a tap.
             if (peak == 1 && config->one_finger_tap) {
                 iqs5xx_emit_click(dev, data, LEFT_BUTTON_CODE);
                 // Arm tap-then-hold: if the next touch lands as a single finger
@@ -423,27 +417,10 @@ static void iqs5xx_work_handler(struct k_work *work) {
 
             goto end_comm;
         }
-    } else if (zoom) {
-        // Zoom magnitude/direction is the signed Relative-X during a zoom gesture
-        // (datasheet 6.6: negative = pinch/zoom-out, positive = spread/zoom-in).
-        // Accumulate and emit one click per tick (see below).
-        data->zoom_acc += rel_x;
-        const int32_t zoom_div = 4; // rel-x units per zoom tick (tune for feel)
-        if (abs(data->zoom_acc) >= zoom_div) {
-            // Emit a KEY click per tick on a dedicated code: the central's
-            // behaviors input processor is built for key events (not relative
-            // ones) and maps these to Ctrl+scroll. Spread -> ZOOM_IN_CODE,
-            // pinch -> ZOOM_OUT_CODE.
-            uint16_t code = (data->zoom_acc > 0) ? ZOOM_IN_CODE : ZOOM_OUT_CODE;
-            input_report_key(dev, code, 1, false, K_FOREVER);
-            input_report_key(dev, code, 0, true, K_FOREVER);
-            data->zoom_acc += (data->zoom_acc > 0) ? -zoom_div : zoom_div;
-        }
-        goto end_comm;
     } else if (tp_movement) {
         // Only move the cursor for a touch that has only ever been a single
-        // finger. After a scroll/zoom, lifting one finger before the other
-        // leaves one contact whose motion would otherwise drag the cursor.
+        // finger. After a scroll, lifting one finger before the other leaves
+        // one contact whose motion would otherwise drag the cursor.
         if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
             // Apply cursor-scale (DT prop; default 100 = no scaling). Lets a
             // user slow the cursor in firmware so the feel matches across hosts
@@ -546,30 +523,11 @@ static int iqs5xx_setup_device(const struct device *dev) {
     // the work handler), so a staggered multi-finger landing can't be
     // misclassified as a right-click before the later fingers arrive.
     two_finger_gestures |= config->scroll ? IQS5XX_SCROLL : 0;
-    two_finger_gestures |= config->zoom ? IQS5XX_ZOOM : 0;
     // Configure multi finger gestures.
     ret = iqs5xx_write_reg8(dev, IQS5XX_MULTI_FINGER_GESTURES_CONF, two_finger_gestures);
     if (ret < 0) {
         LOG_ERR("Failed to configure multi finger gestures: %d", ret);
         return ret;
-    }
-
-    // Zoom fires only once the two contacts' separation changes by at least the
-    // Initial Distance, then emits an event per Consecutive Distance of further
-    // change (datasheet 6.6). Both default high enough that zoom can feel dead,
-    // so set both explicitly -- smaller = more sensitive / more continuous.
-    if (config->zoom) {
-        ret = iqs5xx_write_reg16(dev, IQS5XX_ZOOM_INITIAL_DISTANCE, config->zoom_initial_distance);
-        if (ret < 0) {
-            LOG_ERR("Failed to configure zoom initial distance: %d", ret);
-            return ret;
-        }
-        ret = iqs5xx_write_reg16(dev, IQS5XX_ZOOM_CONSECUTIVE_DISTANCE,
-                                 config->zoom_initial_distance);
-        if (ret < 0) {
-            LOG_ERR("Failed to configure zoom consecutive distance: %d", ret);
-            return ret;
-        }
     }
 
     // Configure axes.
@@ -723,8 +681,6 @@ static int iqs5xx_pm_action(const struct device *dev, enum pm_device_action acti
         .press_and_hold = DT_INST_PROP(n, press_and_hold),                                         \
         .two_finger_tap = DT_INST_PROP(n, two_finger_tap),                                         \
         .three_finger_tap = DT_INST_PROP(n, three_finger_tap),                                     \
-        .zoom = DT_INST_PROP(n, zoom),                                                             \
-        .zoom_initial_distance = DT_INST_PROP_OR(n, zoom_initial_distance, 10),                     \
         .scroll = DT_INST_PROP(n, scroll),                                                         \
         .natural_scroll_x = DT_INST_PROP(n, natural_scroll_x),                                     \
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \

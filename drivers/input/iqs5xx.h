@@ -107,7 +107,7 @@
 // the next finger-down that arms drag-lock. Tighter than the chip's
 // press-and-hold time so it feels like a deliberate double-touch, not a
 // chance re-tap.
-#define IQS5XX_TAP_HOLD_WINDOW_MS 175
+#define IQS5XX_TAP_HOLD_WINDOW_MS 200
 
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)

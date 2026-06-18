@@ -204,7 +204,19 @@ static void iqs5xx_work_handler(struct k_work *work) {
             if (config->tap_then_hold && config->drag_lock && num_fingers == 1 &&
                 !data->manual_drag && data->last_tap_lift_time > 0 &&
                 (k_uptime_get() - data->last_tap_lift_time) <= IQS5XX_TAP_HOLD_WINDOW_MS) {
-                input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+                // The tap's auto-release may still be pending (100ms scheduled
+                // by emit_click). If we leave it scheduled, it would fire
+                // mid-drag and release the host's LEFT button. Cancel it; if
+                // the bit is still set the host already sees LEFT held from
+                // the tap, so just keep it held -- no second press needed.
+                // The shared system workqueue serializes this with the release
+                // work, so the cancel can't race with the work running.
+                k_work_cancel_delayable(&data->button_release_work);
+                if (data->buttons_pressed & LEFT_BUTTON_BIT) {
+                    data->buttons_pressed &= ~LEFT_BUTTON_BIT;
+                } else {
+                    input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+                }
                 data->manual_drag = true;
                 data->tap_then_hold_engaged = true;
             }

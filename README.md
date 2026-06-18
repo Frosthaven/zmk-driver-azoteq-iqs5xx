@@ -12,13 +12,20 @@
 >   finger count seen during the touch. A staggered multi-finger landing resolves
 >   correctly (no early/stray right-click before the 3rd finger), and a
 >   leftover finger after a scroll can no longer drag the cursor.
-> - **Press-and-hold drag-lock.** New `drag-lock` property. A press-and-hold
->   latches the left button as a drag that stays held across finger lifts; a tap
->   releases it (a 2-/3-finger tap also releases — a guaranteed escape so it can
->   never get stuck). With `drag-lock` unset, press-and-hold is the classic
->   momentary hold (releases on lift). Starting a drag from a *press-and-hold*
->   rather than a tap means no stray first click — so dragging a multi-file
->   selection doesn't deselect it and doesn't double-click-open files.
+> - **Drag-lock.** New `drag-lock` property. The left button latches as a drag
+>   that stays held across finger lifts; tap to release (2-/3-finger tap also
+>   releases — a guaranteed escape so it can never get stuck). Two ways to
+>   engage: `tap-then-hold` (tap, then touch+move within 200 ms — recommended)
+>   or `press-and-hold` (hold the finger for the chip's hold time). The driver
+>   masks the tap-then-hold prelude click so dragging a multi-file selection
+>   doesn't deselect it and doesn't double-click-open files. With `drag-lock`
+>   unset, both engagement paths are momentary holds (release on lift).
+> - **Cursor speed scale.** New `cursor-scale-percent` property (default 100 =
+>   no scaling). Lower values slow the cursor in firmware so the feel is
+>   consistent across hosts without per-OS pointer tweaks. The same scale is
+>   applied to scroll at half-strength (cursor=50 → scroll needs ~1.3× the
+>   motion per tick). A per-axis fractional accumulator preserves sub-unit
+>   motion so slow precision movement isn't lost to integer truncation.
 > - **Two-finger zoom (pinch/expand) — implemented but off by default.** New
 >   `zoom` (+ `zoom-initial-distance`) property. When enabled, the chip's zoom
 >   gesture is emitted as KEY clicks on spare button codes (spread →
@@ -49,20 +56,22 @@ Feel free to send a pull request if you test with any of the following models:
 - TPE48
 - TPS48
 
-## Supported features
+## Gestures
 
-- Trackpad movement.
-- Single finger tap: left click (synthesized on lift).
-- Two finger tap: right click (synthesized on lift by peak finger count).
-- Three finger tap: middle click (fork; `three-finger-tap`).
-- Press and hold: continuous left click (allows click and drag). With `drag-lock`
-  it latches a persistent drag held across finger lifts, released by a tap.
-- Vertical scroll.
-- Horizontal scroll.
-- Two-finger zoom / pinch+expand (fork; **off by default**): emitted as key
-  clicks (spread → `INPUT_BTN_4`, pinch → `INPUT_BTN_5`) for a central
-  Ctrl+scroll mapping. Doesn't trigger reliably on small pads (the separation
-  barely changes), so it's not enabled; add `zoom;` to try on a larger pad.
+| Gesture | Action |
+|---|---|
+| Move one finger | Move cursor |
+| Tap with one finger | Left click |
+| Tap with two fingers | Right click |
+| Tap with three fingers | Middle click |
+| Tap, then touch + drag (within 200 ms) | Drag and drop — left button locks, stays held across finger lifts. **Tap once to release.** |
+| Press and hold | Drag and drop (alternate) — same lock behavior as above |
+| Drag with two fingers | Scroll (vertical / horizontal) |
+| Pinch / spread with two fingers | Zoom — **off by default** (emits key clicks; needs a host-side Ctrl+scroll mapping, see below) |
+
+Each click is synthesized on lift from the peak finger count, so a staggered
+multi-finger landing resolves correctly (no early/stray right-click before the
+3rd finger), and a leftover finger after a scroll can't drag the cursor.
 
 ## Usage
 
@@ -92,8 +101,6 @@ Feel free to send a pull request if you test with any of the following models:
          * See: dts/bindings/input/azoteq,iqs5xx-common.yaml for a full list.
          */
         one-finger-tap;
-        press-and-hold;
-        press-and-hold-time = <250>;
         two-finger-tap;
 
         scroll;
@@ -102,9 +109,17 @@ Feel free to send a pull request if you test with any of the following models:
 
         /* Fork additions: */
         three-finger-tap;           /* three-finger tap -> middle click */
+        tap-then-hold;              /* tap, then touch+drag = drag-lock (recommended) */
+        drag-lock;                  /* drag latches across finger lifts; tap releases */
+        cursor-scale-percent = <50>;/* slow the cursor in firmware (100 = no scaling) */
         zoom;                       /* two-finger pinch/expand -> key clicks (experimental) */
         zoom-initial-distance = <20>;
-        drag-lock;                  /* press-and-hold latches a drag; tap releases */
+
+        /* Press-and-hold drag-lock (alternate engagement; chip waits the
+         * hold-time before latching). Combine with drag-lock for the persistent
+         * variant. Omit if you only want tap-then-hold. */
+        /* press-and-hold; */
+        /* press-and-hold-time = <250>; */
 
         bottom-beta = <5>;
         stationary-threshold = <5>;

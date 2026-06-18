@@ -103,6 +103,12 @@
 // as a two-finger tap (right click) on lift. Tune empirically.
 #define IQS5XX_MULTI_TAP_MOVE_MAX 15
 
+// tap-then-hold window: max gap (ms) between a synthesized 1-finger tap and
+// the next finger-down that arms drag-lock. Tighter than the chip's
+// press-and-hold time so it feels like a deliberate double-touch, not a
+// chance re-tap.
+#define IQS5XX_TAP_HOLD_WINDOW_MS 250
+
 // Mouse button helpers.
 #define LEFT_BUTTON_BIT BIT(0)
 #define RIGHT_BUTTON_BIT BIT(1)
@@ -155,6 +161,11 @@ struct iqs5xx_config {
     // When set, a press-and-hold latches a persistent drag-LOCK released by a
     // tap (instead of a momentary hold released when the finger lifts).
     bool drag_lock;
+    // When set, a tap followed by another touch-down within
+    // IQS5XX_TAP_HOLD_WINDOW_MS engages drag-lock at touch-down (no hold
+    // wait). Requires drag_lock; intended as an alternative to the chip's
+    // press_and_hold engagement.
+    bool tap_then_hold;
 
     // Scrolling configuration.
     bool scroll;
@@ -198,4 +209,13 @@ struct iqs5xx_data {
     int64_t touch_start_time;
     int32_t touch_move_acc;
     bool touch_gestured; // touch triggered scroll/zoom -> not a tap
+    // Time (uptime ms) of the last 1-finger tap lift, used to engage
+    // tap-then-hold drag-lock if the next touch-down arrives within
+    // IQS5XX_TAP_HOLD_WINDOW_MS. 0 means no armed tap.
+    int64_t last_tap_lift_time;
+    // Set when the current touch engaged drag-lock via tap-then-hold.
+    // Tracked separately from manual_drag so a second finger arriving during
+    // *this* touch can release the just-engaged lock (the user wanted to
+    // scroll, not drag) without disturbing a lock engaged on a prior touch.
+    bool tap_then_hold_engaged;
 };

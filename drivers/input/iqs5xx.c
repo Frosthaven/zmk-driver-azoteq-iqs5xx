@@ -194,8 +194,35 @@ static void iqs5xx_work_handler(struct k_work *work) {
             data->touch_max_fingers = num_fingers;
             data->touch_move_acc = 0;
             data->touch_gestured = false;
+            data->tap_then_hold_engaged = false;
+            // Tap-then-hold drag-lock: a clean 1-finger tap recently armed
+            // last_tap_lift_time; if this touch lands as a single finger
+            // inside the window and a drag isn't already locked, latch the
+            // left button NOW so the drag tracks from the very first move
+            // (no hold-time wait). Multi-finger landings skip this so a
+            // scroll/zoom intent isn't latched as a drag.
+            if (config->tap_then_hold && config->drag_lock && num_fingers == 1 &&
+                !data->manual_drag && data->last_tap_lift_time > 0 &&
+                (k_uptime_get() - data->last_tap_lift_time) <= IQS5XX_TAP_HOLD_WINDOW_MS) {
+                input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+                data->manual_drag = true;
+                data->tap_then_hold_engaged = true;
+            }
+            // Always consume the armed tap on touch-down -- whether engaged
+            // or not, the chance closes here.
+            data->last_tap_lift_time = 0;
         } else if (num_fingers > data->touch_max_fingers) {
             data->touch_max_fingers = num_fingers;
+            // A second finger arriving during a tap-then-hold engagement is
+            // the user starting a scroll/zoom (staggered landing) -- release
+            // the just-latched drag-lock so the gesture works cleanly. A
+            // drag-lock engaged on a prior touch (carried across lifts) is
+            // NOT released here, only the in-progress one.
+            if (data->tap_then_hold_engaged && data->manual_drag) {
+                input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
+                data->manual_drag = false;
+                data->tap_then_hold_engaged = false;
+            }
         }
         // Count any reported motion (cursor, scroll, or zoom) so a moving touch
         // -- e.g. a quick two-finger scroll flick -- isn't mistaken for a tap.
@@ -228,6 +255,8 @@ static void iqs5xx_work_handler(struct k_work *work) {
             if (low_move || peak >= 2) {
                 input_report_key(dev, LEFT_BUTTON_CODE, 0, true, K_FOREVER);
                 data->manual_drag = false;
+                data->tap_then_hold_engaged = false;
+                data->last_tap_lift_time = 0;
                 if (low_move && peak == 2 && config->two_finger_tap) {
                     iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
                 } else if (low_move && peak == 3 && config->three_finger_tap) {
@@ -241,6 +270,13 @@ static void iqs5xx_work_handler(struct k_work *work) {
             // that scrolled/zoomed is excluded, so a fast pinch isn't a tap.
             if (peak == 1 && config->one_finger_tap) {
                 iqs5xx_emit_click(dev, data, LEFT_BUTTON_CODE);
+                // Arm tap-then-hold: if the next touch lands as a single finger
+                // within IQS5XX_TAP_HOLD_WINDOW_MS, drag-lock latches at touch-
+                // down. Only armed off a clean 1-finger tap (multi-finger taps
+                // are right/middle clicks, not drag intents).
+                if (config->tap_then_hold && config->drag_lock) {
+                    data->last_tap_lift_time = k_uptime_get();
+                }
             } else if (peak == 2 && config->two_finger_tap) {
                 iqs5xx_emit_click(dev, data, RIGHT_BUTTON_CODE);
             } else if (peak == 3 && config->three_finger_tap) {
@@ -606,6 +642,7 @@ static int iqs5xx_pm_action(const struct device *dev, enum pm_device_action acti
         .natural_scroll_y = DT_INST_PROP(n, natural_scroll_y),                                     \
         .press_and_hold_time = DT_INST_PROP_OR(n, press_and_hold_time, 250),                       \
         .drag_lock = DT_INST_PROP(n, drag_lock),                                                   \
+        .tap_then_hold = DT_INST_PROP(n, tap_then_hold),                                           \
         .switch_xy = DT_INST_PROP(n, switch_xy),                                                   \
         .flip_x = DT_INST_PROP(n, flip_x),                                                         \
         .flip_y = DT_INST_PROP(n, flip_y),                                                         \

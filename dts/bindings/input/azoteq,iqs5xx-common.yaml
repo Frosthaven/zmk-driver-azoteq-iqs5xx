@@ -57,6 +57,16 @@ properties:
       released by a tap. When unset, press-and-hold is momentary -- the button is
       held only while the finger stays down and releases on lift.
 
+  tap-then-hold:
+    type: boolean
+    description: |
+      Engage drag-lock from a tap-then-touch sequence: a single-finger tap
+      followed by another single-finger touch-down within ~250ms latches the
+      left button (persistent drag-lock, released by a tap). Use this instead
+      of the chip's press-and-hold so a drag starts the moment the second
+      touch lands, with no hold-time wait. Requires drag-lock. Multi-finger
+      activity (scroll/zoom/multi-tap) within the window cancels engagement.
+
   scroll:
     type: boolean
     description: "Register and report scroll gestures, both vertical and horizontal scroll is supported"

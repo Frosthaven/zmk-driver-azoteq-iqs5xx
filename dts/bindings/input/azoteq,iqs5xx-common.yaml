@@ -111,9 +111,10 @@ properties:
       Scale applied to the cursor's reported REL_X / REL_Y deltas, as a
       percentage of the chip's raw value. Default 100 = no scaling. Set lower to
       slow the cursor in firmware (e.g. 50 = half-speed), so the feel is
-      consistent across host machines without OS pointer tweaks. The same scale
-      is also applied to the scroll divisor (50 = scroll requires 2x as much
-      motion per tick); zoom is not affected. A per-axis fractional accumulator
+      consistent across host machines without OS pointer tweaks. The scroll
+      divisor is slowed at HALF this percentage's strength (scroll_scale =
+      (100 + cursor-scale-percent) / 2) so the wheel doesn't feel as heavy
+      as the cursor; zoom is not affected. A per-axis fractional accumulator
       preserves sub-unit motion so slow precision movement isn't lost to
       integer truncation.
     default: 100

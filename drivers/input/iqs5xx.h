@@ -218,6 +218,11 @@ struct iqs5xx_data {
     // *this* touch can release the just-engaged lock (the user wanted to
     // scroll, not drag) without disturbing a lock engaged on a prior touch.
     bool tap_then_hold_engaged;
+    // Set when a touch lands inside the tap-then-hold window but the chip
+    // hasn't yet reported motion: engagement is deferred so a second quick
+    // tap (= double-click) can lift before any drag latches. Motion engages;
+    // a clean lift falls through to the normal tap path (second click).
+    bool tap_then_hold_pending;
     // Per-axis fractional remainder for the cursor-scale-percent scaling.
     // The scale is integer math (rel * pct / 100), so any chip delta below
     // 100/pct rounds to 0 and slow precision motion is lost. Holding the

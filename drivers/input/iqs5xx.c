@@ -82,10 +82,19 @@ static void iqs5xx_button_release_work_handler(struct k_work *work) {
 static int iqs5xx_setup_device(const struct device *dev);
 
 // Emit a synthetic mouse-button click: press now, auto-release shortly after.
+// If the same button is already pressed (its 100ms auto-release hasn't fired
+// yet), release it first so the host sees a fresh click rather than one long
+// press -- otherwise two fast taps inside the release window collapse into a
+// single click and double-tap is lost.
 static void iqs5xx_emit_click(const struct device *dev, struct iqs5xx_data *data, uint16_t code) {
+    uint8_t bit = BIT(code - INPUT_BTN_0);
     k_work_cancel_delayable(&data->button_release_work);
+    if (data->buttons_pressed & bit) {
+        input_report_key(dev, code, 0, true, K_FOREVER);
+        data->buttons_pressed &= ~bit;
+    }
     input_report_key(dev, code, 1, true, K_FOREVER);
-    data->buttons_pressed |= BIT(code - INPUT_BTN_0);
+    data->buttons_pressed |= bit;
     k_work_schedule(&data->button_release_work, K_MSEC(100));
 }
 
@@ -195,32 +204,21 @@ static void iqs5xx_work_handler(struct k_work *work) {
             data->touch_move_acc = 0;
             data->touch_gestured = false;
             data->tap_then_hold_engaged = false;
+            data->tap_then_hold_pending = false;
             data->cursor_rem_x = 0;
             data->cursor_rem_y = 0;
             // Tap-then-hold drag-lock: a clean 1-finger tap recently armed
             // last_tap_lift_time; if this touch lands as a single finger
-            // inside the window and a drag isn't already locked, latch the
-            // left button NOW so the drag tracks from the very first move
-            // (no hold-time wait). Multi-finger landings skip this so a
-            // scroll/zoom intent isn't latched as a drag.
+            // inside the window and a drag isn't already locked, MARK IT
+            // PENDING. Engagement is deferred to the first cycle that
+            // reports motion -- a clean quick lift instead falls through
+            // to the normal tap path and becomes a second click, so a
+            // double-tap doesn't get eaten by drag-lock. Multi-finger
+            // landings skip this so a scroll/zoom intent isn't pending.
             if (config->tap_then_hold && config->drag_lock && num_fingers == 1 &&
                 !data->manual_drag && data->last_tap_lift_time > 0 &&
                 (k_uptime_get() - data->last_tap_lift_time) <= IQS5XX_TAP_HOLD_WINDOW_MS) {
-                // The tap's auto-release may still be pending (100ms scheduled
-                // by emit_click). If we leave it scheduled, it would fire
-                // mid-drag and release the host's LEFT button. Cancel it; if
-                // the bit is still set the host already sees LEFT held from
-                // the tap, so just keep it held -- no second press needed.
-                // The shared system workqueue serializes this with the release
-                // work, so the cancel can't race with the work running.
-                k_work_cancel_delayable(&data->button_release_work);
-                if (data->buttons_pressed & LEFT_BUTTON_BIT) {
-                    data->buttons_pressed &= ~LEFT_BUTTON_BIT;
-                } else {
-                    input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
-                }
-                data->manual_drag = true;
-                data->tap_then_hold_engaged = true;
+                data->tap_then_hold_pending = true;
             }
             // Always consume the armed tap on touch-down -- whether engaged
             // or not, the chance closes here.
@@ -301,6 +299,32 @@ static void iqs5xx_work_handler(struct k_work *work) {
     }
     data->prev_num_fingers = num_fingers;
 
+    // Resolve a pending tap-then-hold: engage drag-lock only once the chip
+    // reports motion, so a quick double-tap (no motion before lift) can pass
+    // through to the normal tap path as a second click. Multi-finger or lift
+    // before motion clears the pending state without engaging.
+    if (data->tap_then_hold_pending) {
+        if (num_fingers != 1) {
+            data->tap_then_hold_pending = false;
+        } else if (tp_movement) {
+            // The tap's auto-release may still be pending (100ms scheduled
+            // by emit_click). If we leave it scheduled, it would fire
+            // mid-drag and release the host's LEFT button. Cancel it; if
+            // the bit is still set the host already sees LEFT held from
+            // the tap, so just keep it held -- no second press needed.
+            k_work_cancel_delayable(&data->button_release_work);
+            if (data->buttons_pressed & LEFT_BUTTON_BIT) {
+                data->buttons_pressed &= ~LEFT_BUTTON_BIT;
+            } else {
+                input_report_key(dev, LEFT_BUTTON_CODE, 1, true, K_FOREVER);
+            }
+            data->manual_drag = true;
+            data->tap_then_hold_engaged = true;
+            data->tap_then_hold_pending = false;
+        }
+        // else: single finger, no motion yet -- keep pending and wait.
+    }
+
     // Handle movement and gestures.
     //
     // Each one of these branches needs to send the last report it makes as
@@ -331,13 +355,14 @@ static void iqs5xx_work_handler(struct k_work *work) {
     } else if (scroll) {
         // TODO: Expose this base divisor.
         int16_t scroll_div = 32;
-        // Apply cursor-scale-percent to scroll too: a lower scale slows the
-        // wheel by requiring more raw motion per tick. The existing scroll
-        // accumulator absorbs the integer rounding here, so a fractional
-        // remainder isn't needed. scale=50 -> effective_div=64 (twice the
-        // motion per tick); 100 = no slowdown.
+        // Apply cursor-scale-percent to scroll, but at HALF the strength of
+        // the cursor scaling -- a smaller wheel-divisor change so the scroll
+        // doesn't feel as heavily slowed as the cursor. Midpoint formula:
+        // scroll_scale = (100 + cursor_scale) / 2. cursor=50 -> scroll_scale
+        // =75 -> effective_div=42; cursor=100 -> scroll_scale=100 (no slowdown).
         if (config->cursor_scale_percent > 0 && config->cursor_scale_percent != 100) {
-            scroll_div = (int16_t)((int32_t)scroll_div * 100 / config->cursor_scale_percent);
+            int16_t scroll_scale = (int16_t)((100 + config->cursor_scale_percent) / 2);
+            scroll_div = (int16_t)((int32_t)scroll_div * 100 / scroll_scale);
         }
 
         // Only one scrolling direction is valid at a time.
@@ -389,7 +414,12 @@ static void iqs5xx_work_handler(struct k_work *work) {
         // Only move the cursor for a touch that has only ever been a single
         // finger. After a scroll/zoom, lifting one finger before the other
         // leaves one contact whose motion would otherwise drag the cursor.
-        if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1) {
+        // Also skip while a tap-then-hold engage is still pending -- the
+        // pending block above engages on the first motion, so emitting that
+        // first delta as plain cursor motion (before the engage) would leave
+        // the host's cursor moving without the drag's LEFT button held.
+        if ((rel_x != 0 || rel_y != 0) && data->touch_max_fingers <= 1 &&
+            !data->tap_then_hold_pending) {
             // Apply cursor-scale (DT prop; default 100 = no scaling). Lets a
             // user slow the cursor in firmware so the feel matches across hosts
             // without per-OS pointer tweaks.

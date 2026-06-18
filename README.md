@@ -5,10 +5,8 @@
 > with a few extras:
 >
 > - **Three-finger tap** for middle click.
-> - **Tap-then-drag** for drag and drop: tap, then touch and drag — the left
->   button stays held across finger lifts so the drag can span multiple
->   strokes. Tap once to release. Dragging a multi-file selection no longer
->   deselects it.
+> - **Tap-then-drag** for drag and drop: tap, then touch and drag. You will
+>   stay in dragging mode until you tap again to release.
 > - **Cursor tuned to feel like an Apple trackpad** (about half the chip's
 >   default speed, with scroll slowed proportionally and slow precision
 >   movement preserved).
